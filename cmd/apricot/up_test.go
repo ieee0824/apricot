@@ -203,6 +203,21 @@ func TestBuildImageArgs_Dockerfile(t *testing.T) {
 	assertContainsSequence(t, args, "-f", "Dockerfile.dev")
 }
 
+func TestBuildImageArgs_Dockerfile_RelativeToContext(t *testing.T) {
+	bc := &compose.BuildConfig{Context: "./container/mysql", Dockerfile: "Dockerfile"}
+	args := buildImageArgs("myimage", bc)
+	assertContainsSequence(t, args, "-f", "container/mysql/Dockerfile")
+	if args[len(args)-1] != "./container/mysql" {
+		t.Errorf("context must be last arg, got %v", args)
+	}
+}
+
+func TestBuildImageArgs_Dockerfile_AbsolutePathNotJoined(t *testing.T) {
+	bc := &compose.BuildConfig{Context: "./app", Dockerfile: "/opt/dockerfiles/Dockerfile.prod"}
+	args := buildImageArgs("myimage", bc)
+	assertContainsSequence(t, args, "-f", "/opt/dockerfiles/Dockerfile.prod")
+}
+
 func TestBuildImageArgs_Target(t *testing.T) {
 	bc := &compose.BuildConfig{Context: ".", Target: "builder"}
 	args := buildImageArgs("myimage", bc)

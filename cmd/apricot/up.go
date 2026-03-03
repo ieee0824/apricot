@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -251,10 +252,22 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 	var args []string
 
+	// Resolve context early so dockerfile can be joined with it.
+	ctx := bc.Context
+	if ctx == "" {
+		ctx = "."
+	}
+
 	args = append(args, "-t", imageName)
 
 	if bc.Dockerfile != "" {
-		args = append(args, "-f", bc.Dockerfile)
+		// In docker-compose, dockerfile is relative to the build context.
+		// Resolve it against ctx so `container build -f` finds the right file.
+		df := bc.Dockerfile
+		if !filepath.IsAbs(df) {
+			df = filepath.Join(ctx, df)
+		}
+		args = append(args, "-f", df)
 	}
 	if bc.Target != "" {
 		args = append(args, "--target", bc.Target)
@@ -270,10 +283,6 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 	}
 
 	// Context directory (must be last)
-	ctx := bc.Context
-	if ctx == "" {
-		ctx = "."
-	}
 	args = append(args, ctx)
 
 	return args
