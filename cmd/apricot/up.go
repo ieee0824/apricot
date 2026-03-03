@@ -32,7 +32,7 @@ func runUp(args []string) {
 		}
 		networkName := projectName + "_" + name
 		fmt.Printf("Creating network %s\n", networkName)
-		if err := runner.NetworkCreate(networkName); err != nil {
+		if err := runner.NetworkCreate(buildNetworkCreateArgs(networkName, net)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: network create failed for %s: %v\n", networkName, err)
 		}
 	}
@@ -167,5 +167,18 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 	// Command (additional arguments after image)
 	args = append(args, compose.ToStringSlice(svc.Command)...)
 
+	return args
+}
+
+// buildNetworkCreateArgs returns the args for `container network create` (options + name).
+func buildNetworkCreateArgs(networkName string, net compose.Network) []string {
+	var args []string
+	if net.Internal {
+		args = append(args, "--internal")
+	}
+	for k, v := range net.Labels {
+		args = append(args, "--label", k+"="+v)
+	}
+	args = append(args, networkName)
 	return args
 }

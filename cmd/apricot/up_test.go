@@ -180,6 +180,40 @@ func TestBuildRunArgs_ImageIsLast_BeforeCommand(t *testing.T) {
 	}
 }
 
+func TestBuildNetworkCreateArgs_Simple(t *testing.T) {
+	net := compose.Network{}
+	args := buildNetworkCreateArgs("myproject_frontend", net)
+	last := args[len(args)-1]
+	if last != "myproject_frontend" {
+		t.Errorf("expected network name as last arg, got %q", last)
+	}
+	if slices.Contains(args, "--internal") {
+		t.Errorf("--internal should not be present")
+	}
+}
+
+func TestBuildNetworkCreateArgs_Internal(t *testing.T) {
+	net := compose.Network{Internal: true}
+	args := buildNetworkCreateArgs("myproject_backend", net)
+	assertContains(t, args, "--internal")
+	assertContains(t, args, "myproject_backend")
+}
+
+func TestBuildNetworkCreateArgs_Labels(t *testing.T) {
+	net := compose.Network{Labels: map[string]string{"env": "prod"}}
+	args := buildNetworkCreateArgs("myproject_net", net)
+	assertContainsSequence(t, args, "--label", "env=prod")
+	assertContains(t, args, "myproject_net")
+}
+
+func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
+	net := compose.Network{Internal: true, Labels: map[string]string{"k": "v"}}
+	args := buildNetworkCreateArgs("mynet", net)
+	if args[len(args)-1] != "mynet" {
+		t.Errorf("network name must be last arg, got %v", args)
+	}
+}
+
 // helpers
 
 func assertContains(t *testing.T, args []string, want string) {

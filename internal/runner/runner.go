@@ -81,9 +81,10 @@ func Logs(name string, follow bool) error {
 	return cmd.Run()
 }
 
-// NetworkCreate creates a network.
-func NetworkCreate(name string) error {
-	cmd := exec.Command("container", "network", "create", name)
+// NetworkCreate creates a network with the given args (options + name).
+func NetworkCreate(args []string) error {
+	cmdArgs := append([]string{"network", "create"}, args...)
+	cmd := exec.Command("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
