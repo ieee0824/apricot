@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ieee0824/apricot/internal/compose"
 	"github.com/ieee0824/apricot/internal/runner"
@@ -16,6 +17,7 @@ func runBuild(args []string) {
 	fs.Parse(args)
 
 	projectName := resolveProjectName(*project)
+	composeDir := filepath.Dir(*file)
 	services := fs.Args() // optional: specific service names
 
 	cf, err := compose.Load(*file)
@@ -38,6 +40,9 @@ func runBuild(args []string) {
 		bc := compose.ToBuildConfig(svc.Build)
 		if bc == nil {
 			continue
+		}
+		if !filepath.IsAbs(bc.Context) {
+			bc.Context = filepath.Join(composeDir, bc.Context)
 		}
 		imageName := svc.Image
 		if imageName == "" {

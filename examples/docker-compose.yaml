@@ -1,0 +1,62 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: myapp:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=production
+      - DB_HOST=db
+      - DB_PORT=5432
+    env_file:
+      - .env.example
+    volumes:
+      - ./data:/app/data
+    working_dir: /app
+    depends_on:
+      - db
+    networks:
+      - backend
+    labels:
+      - "app.version=1.0.0"
+    init: true
+    tty: true
+
+  db:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
+      POSTGRES_DB: myapp
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    networks:
+      - backend
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 65536
+
+  cache:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    networks:
+      - backend
+    mem_limit: 256m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /data
+
+networks:
+  backend:
+
+volumes:
+  db-data:

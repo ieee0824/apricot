@@ -309,6 +309,28 @@ services:
 	}
 }
 
+func TestExpandEnv_DefaultValue(t *testing.T) {
+	os.Unsetenv("TEST_APRICOT_UNSET")
+	t.Setenv("TEST_APRICOT_SET", "fromenv")
+
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"${TEST_APRICOT_UNSET:-fallback}", "fallback"},
+		{"${TEST_APRICOT_SET:-fallback}", "fromenv"},
+		{"${TEST_APRICOT_UNSET-fallback2}", "fallback2"},
+		{"${TEST_APRICOT_SET-fallback2}", "fromenv"},
+		{"$TEST_APRICOT_SET", "fromenv"},
+	}
+	for _, c := range cases {
+		got := expandEnv(c.input)
+		if got != c.want {
+			t.Errorf("expandEnv(%q) = %q, want %q", c.input, got, c.want)
+		}
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load("/nonexistent/path/docker-compose.yaml")
 	if err == nil {

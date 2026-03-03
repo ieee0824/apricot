@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 
 	"github.com/ieee0824/apricot/internal/compose"
 	"github.com/ieee0824/apricot/internal/runner"
@@ -74,6 +79,7 @@ func runUp(args []string) {
 	fs.Parse(args)
 
 	projectName := resolveProjectName(*project)
+	composeDir := filepath.Dir(*file)
 
 	cf, err := compose.Load(*file)
 	if err != nil {
@@ -121,11 +127,22 @@ func runUp(args []string) {
 		os.Exit(1)
 	}
 
+	// Collect started container names for log streaming (foreground mode)
+	type startedContainer struct {
+		name    string
+		service string
+	}
+	var started []startedContainer
+
 	for _, name := range order {
 		svc := cf.Services[name]
 
 		// Build image if build: is defined
 		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
+			// Resolve build context relative to the compose file's directory
+			if !filepath.IsAbs(bc.Context) {
+				bc.Context = filepath.Join(composeDir, bc.Context)
+			}
 			imageName := svc.Image
 			if imageName == "" {
 				imageName = projectName + "_" + name
@@ -135,7 +152,6 @@ func runUp(args []string) {
 				fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
 				os.Exit(1)
 			}
-			// If image: was not set, use the built image name for run
 			if svc.Image == "" {
 				svc.Image = imageName
 			}
@@ -153,29 +169,66 @@ func runUp(args []string) {
 			} else {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
-			// Remove existing container with the same name
 			_ = runner.StopQuiet(containerName)
 			_ = runner.DeleteQuiet(containerName)
 
-			// Ensure bind mount host directories exist
-			if err := ensureBindMountDirs(svc.Volumes); err != nil {
+			if err := ensureBindMountDirs(svc.Volumes, composeDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
 
-			runArgs := buildRunArgs(containerName, name, projectName, svc, cf)
+			runArgs := buildRunArgs(containerName, name, projectName, composeDir, svc, cf)
 
 			fmt.Printf("Starting %s\n", containerName)
-			if err := runner.Run(runArgs, *detach); err != nil {
+			// Always start detached; foreground mode streams logs below
+			if err := runner.Run(runArgs, true); err != nil {
 				fmt.Fprintf(os.Stderr, "Error starting %s: %v\n", containerName, err)
 				os.Exit(1)
 			}
+			started = append(started, startedContainer{name: containerName, service: name})
 		}
 	}
+
+	if *detach || len(started) == 0 {
+		return
+	}
+
+	// Foreground mode: stream logs from all containers, stop on Ctrl+C
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	// Calculate prefix width for alignment
+	maxLen := 0
+	for _, s := range started {
+		if len(s.service) > maxLen {
+			maxLen = len(s.service)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, s := range started {
+		wg.Add(1)
+		prefix := fmt.Sprintf("%-*s", maxLen, s.service)
+		go func(containerName, pfx string) {
+			defer wg.Done()
+			runner.LogsFollow(ctx, containerName, pfx, os.Stdout)
+		}(s.name, prefix)
+	}
+
+	<-sigCh
+	fmt.Println("\nStopping...")
+	cancel()
+	for _, s := range started {
+		_ = runner.StopQuiet(s.name)
+	}
+	wg.Wait()
 }
 
 // buildRunArgs converts a Service to `container run` arguments (excluding -d and the command itself).
-func buildRunArgs(containerName, serviceName, projectName string, svc compose.Service, cf *compose.ComposeFile) []string {
+func buildRunArgs(containerName, serviceName, projectName, composeDir string, svc compose.Service, cf *compose.ComposeFile) []string {
 	var args []string
 
 	args = append(args, "--name", containerName)
@@ -192,11 +245,15 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 
 	// Env files
 	for _, f := range compose.ToStringSlice(svc.EnvFile) {
+		if !filepath.IsAbs(f) {
+			f = filepath.Join(composeDir, f)
+		}
 		args = append(args, "--env-file", f)
 	}
 
 	// Volumes
 	for _, v := range svc.Volumes {
+		v = resolveVolumeHostPath(v, composeDir)
 		args = append(args, "-v", v)
 	}
 
@@ -230,9 +287,9 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 		args = append(args, "-u", svc.User)
 	}
 
-	// CPUs
+	// CPUs (container run -c requires integer; round up from float)
 	if svc.CPUs > 0 {
-		args = append(args, "-c", strconv.FormatFloat(svc.CPUs, 'f', -1, 64))
+		args = append(args, "-c", strconv.Itoa(int(math.Ceil(svc.CPUs))))
 	}
 
 	// Memory
@@ -340,17 +397,37 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 
 // ensureBindMountDirs creates host directories for bind mount volumes
 // that don't exist yet. Named volumes (no path prefix) are skipped.
-func ensureBindMountDirs(volumes []string) error {
+func ensureBindMountDirs(volumes []string, composeDir string) error {
 	for _, v := range volumes {
 		hostPath := parseBindMountHostPath(v)
 		if hostPath == "" {
 			continue
+		}
+		if !filepath.IsAbs(hostPath) {
+			hostPath = filepath.Join(composeDir, hostPath)
 		}
 		if err := os.MkdirAll(hostPath, 0755); err != nil {
 			return fmt.Errorf("failed to create bind mount directory %q: %w", hostPath, err)
 		}
 	}
 	return nil
+}
+
+// resolveVolumeHostPath rewrites a volume spec's host path to be absolute,
+// resolving relative paths against composeDir.
+func resolveVolumeHostPath(volume, composeDir string) string {
+	parts := strings.SplitN(volume, ":", 2)
+	if len(parts) < 2 {
+		return volume
+	}
+	host := parts[0]
+	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
+		return volume // named volume, leave as-is
+	}
+	if !filepath.IsAbs(host) {
+		host = filepath.Join(composeDir, host)
+	}
+	return host + ":" + parts[1]
 }
 
 // parseBindMountHostPath extracts the host path from a volume spec like

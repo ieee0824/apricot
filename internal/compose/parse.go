@@ -3,19 +3,41 @@ package compose
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// expandEnv expands environment variables supporting ${VAR:-default} and ${VAR-default} syntax.
+func expandEnv(s string) string {
+	return os.Expand(s, func(key string) string {
+		if i := strings.Index(key, ":-"); i >= 0 {
+			name, def := key[:i], key[i+2:]
+			if v := os.Getenv(name); v != "" {
+				return v
+			}
+			return def
+		}
+		if i := strings.Index(key, "-"); i >= 0 {
+			name, def := key[:i], key[i+1:]
+			if v, ok := os.LookupEnv(name); ok {
+				return v
+			}
+			return def
+		}
+		return os.Getenv(key)
+	})
+}
+
 // Load reads and parses a docker-compose.yaml file.
-// Environment variables ($VAR, ${VAR}) in the file are expanded before parsing.
+// Environment variables ($VAR, ${VAR}, ${VAR:-default}) in the file are expanded before parsing.
 func Load(path string) (*ComposeFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
-	expanded := os.ExpandEnv(string(data))
+	expanded := expandEnv(string(data))
 
 	var cf ComposeFile
 	if err := yaml.Unmarshal([]byte(expanded), &cf); err != nil {

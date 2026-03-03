@@ -1,8 +1,11 @@
 package runner
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 )
@@ -75,6 +78,32 @@ func List(all bool) ([]Container, error) {
 		return nil, fmt.Errorf("failed to parse container list output: %w", err)
 	}
 	return containers, nil
+}
+
+// LogsFollow streams logs from a container, writing each line with a prefix to w.
+// Blocks until the context is cancelled or the container exits.
+func LogsFollow(ctx context.Context, name, prefix string, w io.Writer) {
+	cmd := exec.CommandContext(ctx, "container", "logs", "-f", name)
+	pr, pw := io.Pipe()
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+
+	if err := cmd.Start(); err != nil {
+		return
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		scanner := bufio.NewScanner(pr)
+		for scanner.Scan() {
+			fmt.Fprintf(w, "%s | %s\n", prefix, scanner.Text())
+		}
+	}()
+
+	cmd.Wait()
+	pw.Close()
+	<-done
 }
 
 // Logs streams logs for a container.
