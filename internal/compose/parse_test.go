@@ -269,6 +269,46 @@ func TestToBuildConfig_ArgsSlice(t *testing.T) {
 	}
 }
 
+func TestLoad_ExpandEnv(t *testing.T) {
+	t.Setenv("TEST_APRICOT_IMAGE", "myapp:v2")
+	t.Setenv("TEST_APRICOT_PORT", "9090")
+
+	yaml := `
+services:
+  web:
+    image: ${TEST_APRICOT_IMAGE}
+    ports:
+      - "${TEST_APRICOT_PORT}:80"
+    volumes:
+      - ${HOME}/data:/data
+`
+	f, err := os.CreateTemp("", "compose-env-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(yaml)
+	f.Close()
+
+	cf, err := Load(f.Name())
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	web := cf.Services["web"]
+	if web.Image != "myapp:v2" {
+		t.Errorf("expected image myapp:v2, got %q", web.Image)
+	}
+	if len(web.Ports) != 1 || web.Ports[0] != "9090:80" {
+		t.Errorf("expected port 9090:80, got %v", web.Ports)
+	}
+	home := os.Getenv("HOME")
+	expected := home + "/data:/data"
+	if len(web.Volumes) != 1 || web.Volumes[0] != expected {
+		t.Errorf("expected volume %q, got %v", expected, web.Volumes)
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load("/nonexistent/path/docker-compose.yaml")
 	if err == nil {
