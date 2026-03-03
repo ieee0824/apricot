@@ -1,6 +1,7 @@
 # apricot
 
 [![Test](https://github.com/ieee0824/apricot/actions/workflows/test.yml/badge.svg)](https://github.com/ieee0824/apricot/actions/workflows/test.yml)
+[![Coverage](https://raw.githubusercontent.com/ieee0824/apricot/badges/coverage.svg)](https://github.com/ieee0824/apricot/actions/workflows/test.yml)
 
 [English](README.md)
 
