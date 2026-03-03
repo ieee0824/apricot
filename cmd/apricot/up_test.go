@@ -255,6 +255,82 @@ func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
 	}
 }
 
+func TestBuildRunArgs_Init(t *testing.T) {
+	svc := compose.Service{Image: "myapp", Init: true}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	assertContains(t, args, "--init")
+}
+
+func TestBuildRunArgs_DNSSearch(t *testing.T) {
+	svc := compose.Service{Image: "myapp", DNSSearch: []interface{}{"example.com"}}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	assertContainsSequence(t, args, "--dns-search", "example.com")
+}
+
+func TestBuildRunArgs_DNSOpt(t *testing.T) {
+	svc := compose.Service{Image: "myapp", DNSOpt: []interface{}{"ndots:2"}}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	assertContainsSequence(t, args, "--dns-option", "ndots:2")
+}
+
+func TestBuildRunArgs_Ulimits(t *testing.T) {
+	svc := compose.Service{
+		Image: "myapp",
+		Ulimits: map[string]interface{}{
+			"nofile": map[string]interface{}{"soft": 1024, "hard": 2048},
+		},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	assertContainsSequence(t, args, "--ulimit", "nofile=1024:2048")
+}
+
+func TestScaleMap_Set_Valid(t *testing.T) {
+	s := make(scaleMap)
+	if err := s.Set("web=3"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s["web"] != 3 {
+		t.Errorf("expected s[\"web\"]=3, got %d", s["web"])
+	}
+}
+
+func TestScaleMap_Set_Multiple(t *testing.T) {
+	s := make(scaleMap)
+	s.Set("web=2")
+	s.Set("db=1")
+	if s["web"] != 2 || s["db"] != 1 {
+		t.Errorf("unexpected scale map: %v", map[string]int(s))
+	}
+}
+
+func TestScaleMap_Set_InvalidFormat(t *testing.T) {
+	s := make(scaleMap)
+	if err := s.Set("web"); err == nil {
+		t.Error("expected error for missing =N")
+	}
+}
+
+func TestScaleMap_Set_InvalidNumber(t *testing.T) {
+	s := make(scaleMap)
+	if err := s.Set("web=abc"); err == nil {
+		t.Error("expected error for non-integer value")
+	}
+}
+
+func TestScaleMap_Set_Zero(t *testing.T) {
+	s := make(scaleMap)
+	if err := s.Set("web=0"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if s["web"] != 0 {
+		t.Errorf("expected s[\"web\"]=0, got %d", s["web"])
+	}
+}
+
 // helpers
 
 func assertContains(t *testing.T, args []string, want string) {

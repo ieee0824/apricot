@@ -21,6 +21,8 @@ func main() {
 		runPs(os.Args[2:])
 	case "logs":
 		runLogs(os.Args[2:])
+	case "exec":
+		runExec(os.Args[2:])
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -41,6 +43,7 @@ COMMANDS:
   down    Stop and remove services
   ps      List containers for the current project
   logs    Show logs for services
+  exec    Run a command in a running service container
 
 OPTIONS (common):
   -f <file>     Path to docker-compose.yaml (default: docker-compose.yaml)

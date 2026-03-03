@@ -38,8 +38,12 @@ type Service struct {
 	DependsOn     interface{} `yaml:"depends_on"` // []string or map
 	ContainerName string      `yaml:"container_name"`
 	ReadOnly      bool        `yaml:"read_only"`
-	Tmpfs         interface{} `yaml:"tmpfs"` // string or []string
-	DNS           interface{} `yaml:"dns"`   // string or []string
+	Tmpfs         interface{} `yaml:"tmpfs"`      // string or []string
+	DNS           interface{} `yaml:"dns"`        // string or []string
+	DNSSearch     interface{} `yaml:"dns_search"` // string or []string
+	DNSOpt        interface{} `yaml:"dns_opt"`    // string or []string
+	Init          bool        `yaml:"init"`
+	Ulimits       interface{} `yaml:"ulimits"` // map[string]int or map[string]{soft,hard}
 	Restart       string      `yaml:"restart"`
 }
 

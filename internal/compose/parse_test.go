@@ -278,6 +278,43 @@ func TestLoad_FileNotFound(t *testing.T) {
 
 // helpers
 
+func TestToUlimitSlice_Shorthand(t *testing.T) {
+	v := map[string]interface{}{
+		"nproc": 65535,
+	}
+	result := ToUlimitSlice(v)
+	if len(result) != 1 || result[0] != "nproc=65535" {
+		t.Errorf("expected [nproc=65535], got %v", result)
+	}
+}
+
+func TestToUlimitSlice_LongForm(t *testing.T) {
+	v := map[string]interface{}{
+		"nofile": map[string]interface{}{
+			"soft": 1024,
+			"hard": 2048,
+		},
+	}
+	result := ToUlimitSlice(v)
+	if len(result) != 1 || result[0] != "nofile=1024:2048" {
+		t.Errorf("expected [nofile=1024:2048], got %v", result)
+	}
+}
+
+func TestToUlimitSlice_Nil(t *testing.T) {
+	if ToUlimitSlice(nil) != nil {
+		t.Error("expected nil for nil input")
+	}
+}
+
+func TestToStringSlice_DNSSearch(t *testing.T) {
+	svc := Service{Image: "myapp", DNSSearch: []interface{}{"example.com"}}
+	result := ToStringSlice(svc.DNSSearch)
+	if len(result) != 1 || result[0] != "example.com" {
+		t.Errorf("expected [example.com], got %v", result)
+	}
+}
+
 func stringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

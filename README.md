@@ -20,11 +20,15 @@ go build -o /usr/local/bin/apricot ./cmd/apricot/
 サービスを起動します。
 
 ```bash
-apricot up          # フォアグラウンドで起動
-apricot up -d       # バックグラウンドで起動
+apricot up                        # フォアグラウンドで起動
+apricot up -d                     # バックグラウンドで起動
+apricot up --scale web=3          # web を3インスタンス起動
+apricot up --scale web=3 --scale db=2  # 複数サービスをスケール
 apricot up -f path/to/docker-compose.yaml  # ファイルを指定
 apricot up -p myproject                    # プロジェクト名を指定
 ```
+
+`--scale` を指定したサービスのコンテナ名は `<project>-<service>-<index>` 形式になります（例: `myapp-web-1`, `myapp-web-2`）。
 
 ### down
 
@@ -53,6 +57,25 @@ apricot logs              # 全サービスのログ
 apricot logs web          # 特定サービスのログ
 apricot logs -f web       # フォロー
 ```
+
+### exec
+
+実行中のサービスコンテナでコマンドを実行します。
+
+```bash
+apricot exec web sh             # sh を起動
+apricot exec -it web bash       # インタラクティブ + TTY
+apricot exec -u 1000 web whoami # ユーザー指定
+apricot exec -w /app web pwd    # 作業ディレクトリ指定
+```
+
+| オプション | 説明 |
+|---|---|
+| `-t` | TTY を開く |
+| `-i` | 標準入力を保持 |
+| `-d` | デタッチして実行 |
+| `-u <user>` | ユーザー指定 |
+| `-w <dir>` | 作業ディレクトリ指定 |
 
 ## 共通オプション
 
@@ -83,6 +106,10 @@ apricot logs -f web       # フォロー
 | `read_only` | ✅ |
 | `tmpfs` | ✅ |
 | `dns` | ✅ |
+| `dns_search` | ✅ |
+| `dns_opt` | ✅ |
+| `init` | ✅ |
+| `ulimits` | ✅ |
 | `depends_on` | ✅ (起動順序のみ) |
 | `container_name` | ✅ |
 | `restart` | ❌ (未対応) |

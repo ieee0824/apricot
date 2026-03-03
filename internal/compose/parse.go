@@ -158,6 +158,45 @@ func toStringMap(v interface{}) map[string]string {
 	return nil
 }
 
+// ToUlimitSlice converts the ulimits: field to a slice of "type=soft:hard" strings.
+// Supports both shorthand (int) and long form ({soft: N, hard: N}).
+func ToUlimitSlice(v interface{}) []string {
+	if v == nil {
+		return nil
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(m))
+	for name, val := range m {
+		switch u := val.(type) {
+		case int:
+			result = append(result, fmt.Sprintf("%s=%d", name, u))
+		case map[string]interface{}:
+			soft, hasSoft := toInt(u["soft"])
+			hard, hasHard := toInt(u["hard"])
+			if hasSoft && hasHard {
+				result = append(result, fmt.Sprintf("%s=%d:%d", name, soft, hard))
+			} else if hasSoft {
+				result = append(result, fmt.Sprintf("%s=%d", name, soft))
+			}
+		}
+	}
+	return result
+}
+
+// toInt tries to extract an int from interface{} (handles int and float64 from YAML).
+func toInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case float64:
+		return int(n), true
+	}
+	return 0, false
+}
+
 // ResolveNetworkName returns the actual network name to pass to --network.
 // External networks use their own name (or the name: override), not the project prefix.
 func ResolveNetworkName(key, projectName string, net Network) string {

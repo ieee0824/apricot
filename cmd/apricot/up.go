@@ -5,16 +5,43 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/ieee0824/apricot/internal/compose"
 	"github.com/ieee0824/apricot/internal/runner"
 )
+
+// scaleMap holds per-service scale counts, populated via repeated --scale flags.
+type scaleMap map[string]int
+
+func (s scaleMap) String() string {
+	parts := make([]string, 0, len(s))
+	for k, v := range s {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, v))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (s scaleMap) Set(v string) error {
+	parts := strings.SplitN(v, "=", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid scale format %q, expected service=N", v)
+	}
+	n, err := strconv.Atoi(parts[1])
+	if err != nil || n < 0 {
+		return fmt.Errorf("invalid scale value %q: must be a non-negative integer", parts[1])
+	}
+	s[parts[0]] = n
+	return nil
+}
 
 func runUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	detach := fs.Bool("d", false, "Run containers in background")
 	file := fs.String("f", "docker-compose.yaml", "Path to docker-compose.yaml")
 	project := fs.String("p", "", "Project name (default: current directory name)")
+	scale := make(scaleMap)
+	fs.Var(scale, "scale", "Scale a service (format: service=N, repeatable)")
 	fs.Parse(args)
 
 	projectName := resolveProjectName(*project)
@@ -73,13 +100,25 @@ func runUp(args []string) {
 			}
 		}
 
-		containerName := containerNameFor(projectName, name, svc.ContainerName)
-		args := buildRunArgs(containerName, name, projectName, svc, cf)
+		n, scaled := scale[name]
+		if !scaled {
+			n = 1
+		}
 
-		fmt.Printf("Starting %s\n", containerName)
-		if err := runner.Run(args, *detach); err != nil {
-			fmt.Fprintf(os.Stderr, "Error starting %s: %v\n", containerName, err)
-			os.Exit(1)
+		for i := 1; i <= n; i++ {
+			var containerName string
+			if scaled {
+				containerName = projectName + "-" + name + "-" + strconv.Itoa(i)
+			} else {
+				containerName = containerNameFor(projectName, name, svc.ContainerName)
+			}
+			runArgs := buildRunArgs(containerName, name, projectName, svc, cf)
+
+			fmt.Printf("Starting %s\n", containerName)
+			if err := runner.Run(runArgs, *detach); err != nil {
+				fmt.Fprintf(os.Stderr, "Error starting %s: %v\n", containerName, err)
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -171,6 +210,26 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 	// DNS
 	for _, d := range compose.ToStringSlice(svc.DNS) {
 		args = append(args, "--dns", d)
+	}
+
+	// DNS search
+	for _, d := range compose.ToStringSlice(svc.DNSSearch) {
+		args = append(args, "--dns-search", d)
+	}
+
+	// DNS options
+	for _, d := range compose.ToStringSlice(svc.DNSOpt) {
+		args = append(args, "--dns-option", d)
+	}
+
+	// Init
+	if svc.Init {
+		args = append(args, "--init")
+	}
+
+	// Ulimits
+	for _, u := range compose.ToUlimitSlice(svc.Ulimits) {
+		args = append(args, "--ulimit", u)
 	}
 
 	// Entrypoint

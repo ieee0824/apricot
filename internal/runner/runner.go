@@ -115,6 +115,16 @@ func VolumeDelete(name string) error {
 	return cmd.Run()
 }
 
+// Exec runs `container exec` with the given args (options + container + command).
+func Exec(args []string) error {
+	cmdArgs := append([]string{"exec"}, args...)
+	cmd := exec.Command("container", cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
 // NetworkDelete deletes a network.
 func NetworkDelete(name string) error {
 	cmd := exec.Command("container", "network", "delete", name)
