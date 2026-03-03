@@ -33,14 +33,7 @@ func runDown(args []string) {
 	}
 
 	// Stop and delete containers matching this project
-	prefix := projectName + "-"
-	for _, c := range containers {
-		if !strings.HasPrefix(c.Name, prefix) {
-			continue
-		}
-
-		// Verify it belongs to this project via label check if needed.
-		// Simple prefix match is sufficient for now.
+	for _, c := range containersForProject(containers, projectName) {
 		fmt.Printf("Stopping %s\n", c.Name)
 		if err := runner.Stop(c.Name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: stop failed for %s: %v\n", c.Name, err)
@@ -52,14 +45,51 @@ func runDown(args []string) {
 		}
 	}
 
+	// Remove networks (after containers are gone)
+	for _, networkName := range networkNamesForProject(cf.Networks, projectName) {
+		fmt.Printf("Removing network %s\n", networkName)
+		if err := runner.NetworkDelete(networkName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: network delete failed for %s: %v\n", networkName, err)
+		}
+	}
+
 	// Remove volumes if requested
 	if *removeVolumes {
-		for name := range cf.Volumes {
-			volumeName := projectName + "_" + name
+		for _, volumeName := range volumeNamesForProject(cf.Volumes, projectName) {
 			fmt.Printf("Removing volume %s\n", volumeName)
 			if err := runner.VolumeDelete(volumeName); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: volume delete failed for %s: %v\n", volumeName, err)
 			}
 		}
 	}
+}
+
+// containersForProject returns containers whose name starts with "<projectName>-".
+func containersForProject(containers []runner.Container, projectName string) []runner.Container {
+	prefix := projectName + "-"
+	var result []runner.Container
+	for _, c := range containers {
+		if strings.HasPrefix(c.Name, prefix) {
+			result = append(result, c)
+		}
+	}
+	return result
+}
+
+// networkNamesForProject returns the qualified network names for a project.
+func networkNamesForProject(networks map[string]compose.Network, projectName string) []string {
+	result := make([]string, 0, len(networks))
+	for name := range networks {
+		result = append(result, projectName+"_"+name)
+	}
+	return result
+}
+
+// volumeNamesForProject returns the qualified volume names for a project.
+func volumeNamesForProject(volumes map[string]compose.Volume, projectName string) []string {
+	result := make([]string, 0, len(volumes))
+	for name := range volumes {
+		result = append(result, projectName+"_"+name)
+	}
+	return result
 }

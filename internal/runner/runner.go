@@ -104,3 +104,11 @@ func VolumeDelete(name string) error {
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
+
+// NetworkDelete deletes a network.
+func NetworkDelete(name string) error {
+	cmd := exec.Command("container", "network", "delete", name)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
