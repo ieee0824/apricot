@@ -12,11 +12,20 @@ docker-compose.yaml をそのまま読み込める
 
 ## インストール
 
+### Homebrew（推奨）
+
+```bash
+brew tap ieee0824/tap
+brew install apricot
+```
+
+### go install
+
 ```bash
 go install github.com/ieee0824/apricot/cmd/apricot@latest
 ```
 
-ソースからビルドする場合:
+### ソースからビルド
 
 ```bash
 go build -o /usr/local/bin/apricot ./cmd/apricot/

@@ -13,11 +13,20 @@ Load `docker-compose.yaml` as-is.
 
 ## Installation
 
+### Homebrew (recommended)
+
+```bash
+brew tap ieee0824/tap
+brew install apricot
+```
+
+### go install
+
 ```bash
 go install github.com/ieee0824/apricot/cmd/apricot@latest
 ```
 
-Build from source:
+### Build from source
 
 ```bash
 go build -o /usr/local/bin/apricot ./cmd/apricot/
