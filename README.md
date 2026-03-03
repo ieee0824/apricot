@@ -2,99 +2,102 @@
 
 [![Test](https://github.com/ieee0824/apricot/actions/workflows/test.yml/badge.svg)](https://github.com/ieee0824/apricot/actions/workflows/test.yml)
 
-[apple container](https://github.com/apple/container) で docker compose みたいなことをしたい
+docker compose-like tool for [apple container](https://github.com/apple/container).
 
-## 目標
-docker-compose.yaml をそのまま読み込める
+[日本語](README.ja.md)
 
-## インストール
+## Goal
+
+Load `docker-compose.yaml` as-is.
+
+## Installation
 
 ```bash
 go install github.com/ieee0824/apricot/cmd/apricot@latest
 ```
 
-ソースからビルドする場合:
+Build from source:
 
 ```bash
 go build -o /usr/local/bin/apricot ./cmd/apricot/
 ```
 
-## 使い方
+## Usage
 
-`docker-compose.yaml` があるディレクトリで実行します。
+Run in the directory containing `docker-compose.yaml`.
 
 ### up
 
-サービスを起動します。
+Start services.
 
 ```bash
-apricot up                        # フォアグラウンドで起動
-apricot up -d                     # バックグラウンドで起動
-apricot up --scale web=3          # web を3インスタンス起動
-apricot up --scale web=3 --scale db=2  # 複数サービスをスケール
-apricot up -f path/to/docker-compose.yaml  # ファイルを指定
-apricot up -p myproject                    # プロジェクト名を指定
+apricot up                        # foreground
+apricot up -d                     # background
+apricot up --scale web=3          # start 3 instances of web
+apricot up --scale web=3 --scale db=2  # scale multiple services
+apricot up -f path/to/docker-compose.yaml  # specify file
+apricot up -p myproject                    # specify project name
 ```
 
-`--scale` を指定したサービスのコンテナ名は `<project>-<service>-<index>` 形式になります（例: `myapp-web-1`, `myapp-web-2`）。
+Scaled containers are named `<project>-<service>-<index>` (e.g. `myapp-web-1`, `myapp-web-2`).
 
 ### down
 
-サービスを停止・削除します。
+Stop and remove services.
 
 ```bash
-apricot down        # コンテナを停止・削除
-apricot down -v     # ボリュームも削除
+apricot down        # stop and remove containers
+apricot down -v     # also remove volumes
 ```
 
 ### ps
 
-現在のプロジェクトのコンテナ一覧を表示します。
+List containers for the current project.
 
 ```bash
 apricot ps
-apricot ps -a       # 停止中のコンテナも表示
+apricot ps -a       # include stopped containers
 ```
 
 ### logs
 
-コンテナのログを表示します。
+Show container logs.
 
 ```bash
-apricot logs              # 全サービスのログ
-apricot logs web          # 特定サービスのログ
-apricot logs -f web       # フォロー
+apricot logs              # all services
+apricot logs web          # specific service
+apricot logs -f web       # follow
 ```
 
 ### exec
 
-実行中のサービスコンテナでコマンドを実行します。
+Run a command in a running service container.
 
 ```bash
-apricot exec web sh             # sh を起動
-apricot exec -it web bash       # インタラクティブ + TTY
-apricot exec -u 1000 web whoami # ユーザー指定
-apricot exec -w /app web pwd    # 作業ディレクトリ指定
+apricot exec web sh             # start sh
+apricot exec -it web bash       # interactive + TTY
+apricot exec -u 1000 web whoami # specify user
+apricot exec -w /app web pwd    # specify working directory
 ```
 
-| オプション | 説明 |
+| Option | Description |
 |---|---|
-| `-t` | TTY を開く |
-| `-i` | 標準入力を保持 |
-| `-d` | デタッチして実行 |
-| `-u <user>` | ユーザー指定 |
-| `-w <dir>` | 作業ディレクトリ指定 |
+| `-t` | Allocate TTY |
+| `-i` | Keep stdin open |
+| `-d` | Detached mode |
+| `-u <user>` | Specify user |
+| `-w <dir>` | Specify working directory |
 
-## 共通オプション
+## Global Options
 
-| オプション | 説明 | デフォルト |
+| Option | Description | Default |
 |---|---|---|
-| `-f <file>` | docker-compose.yaml のパス | `docker-compose.yaml` |
-| `-p <project>` | プロジェクト名 | カレントディレクトリ名 |
+| `-f <file>` | Path to docker-compose.yaml | `docker-compose.yaml` |
+| `-p <project>` | Project name | current directory name |
 
-## docker-compose.yaml 対応フィールド
+## Supported docker-compose.yaml Fields
 
-| フィールド | 対応 |
+| Field | Supported |
 |---|---|
 | `image` | ✅ |
 | `ports` | ✅ |
@@ -118,6 +121,6 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | `dns_opt` | ✅ |
 | `init` | ✅ |
 | `ulimits` | ✅ |
-| `depends_on` | ✅ (起動順序のみ) |
+| `depends_on` | ✅ (startup order only) |
 | `container_name` | ✅ |
-| `restart` | ❌ (未対応) |
+| `restart` | ❌ (not supported) |
