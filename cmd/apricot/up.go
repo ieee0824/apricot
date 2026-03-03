@@ -153,6 +153,10 @@ func runUp(args []string) {
 			} else {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
+			// Remove existing container with the same name
+			_ = runner.StopQuiet(containerName)
+			_ = runner.DeleteQuiet(containerName)
+
 			// Ensure bind mount host directories exist
 			if err := ensureBindMountDirs(svc.Volumes); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
