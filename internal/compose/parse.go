@@ -8,14 +8,17 @@ import (
 )
 
 // Load reads and parses a docker-compose.yaml file.
+// Environment variables ($VAR, ${VAR}) in the file are expanded before parsing.
 func Load(path string) (*ComposeFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
 
+	expanded := os.ExpandEnv(string(data))
+
 	var cf ComposeFile
-	if err := yaml.Unmarshal(data, &cf); err != nil {
+	if err := yaml.Unmarshal([]byte(expanded), &cf); err != nil {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
