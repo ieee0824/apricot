@@ -1,5 +1,7 @@
 # apricot
 
+[![Test](https://github.com/ieee0824/apricot/actions/workflows/test.yml/badge.svg)](https://github.com/ieee0824/apricot/actions/workflows/test.yml)
+
 [apple container](https://github.com/apple/container) で docker compose みたいなことをしたい
 
 ## 目標
