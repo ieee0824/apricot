@@ -32,14 +32,17 @@ jobs:
             apricot_darwin_arm64.tar.gz
             apricot_darwin_arm64.tar.gz.sha256
 
+      - name: Setup SSH for homebrew-tap
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+
       - name: Update homebrew-tap formula
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           VERSION=${{ github.ref_name }}
           SHA256=$(sha256sum apricot_darwin_arm64.tar.gz | awk '{print $1}')
 
-          git clone https://x-access-token:${GH_TOKEN}@github.com/ieee0824/homebrew-tap.git
+          git clone git@github.com:ieee0824/homebrew-tap.git
           cd homebrew-tap
 
           cat > Formula/apricot.rb << EOF
