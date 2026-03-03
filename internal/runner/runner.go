@@ -41,6 +41,16 @@ func Stop(name string) error {
 	return cmd.Run()
 }
 
+// StopQuiet stops the container without printing output (for cleanup).
+func StopQuiet(name string) error {
+	return exec.Command("container", "stop", name).Run()
+}
+
+// DeleteQuiet deletes the container without printing output (for cleanup).
+func DeleteQuiet(name string) error {
+	return exec.Command("container", "delete", name).Run()
+}
+
 // Delete deletes the container with the given name/id.
 func Delete(name string) error {
 	cmd := exec.Command("container", "delete", name)
