@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/ieee0824/apricot/branch/main/graph/badge.svg)](https://codecov.io/gh/ieee0824/apricot)
 
 
-docker compose-like tool for [apple container](https://github.com/apple/container).
+docker-compose like tool for [apple container](https://github.com/apple/container).
 
 [日本語](README.ja.md)
 

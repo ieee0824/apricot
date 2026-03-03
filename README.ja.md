@@ -6,7 +6,7 @@
 
 [English](README.md)
 
-[apple container](https://github.com/apple/container) で docker compose みたいなことをしたい
+[apple container](https://github.com/apple/container) で docker-compose みたいなことをしたい
 
 ## 目標
 docker-compose.yaml をそのまま読み込める
