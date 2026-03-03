@@ -4,7 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 )
+
+var version = ""
+
+func init() {
+	if version != "" {
+		return // set via ldflags
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		version = info.Main.Version
+	} else {
+		version = "dev"
+	}
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -15,6 +29,8 @@ func main() {
 	switch os.Args[1] {
 	case "up":
 		runUp(os.Args[2:])
+	case "build":
+		runBuild(os.Args[2:])
 	case "down":
 		runDown(os.Args[2:])
 	case "ps":
@@ -23,6 +39,8 @@ func main() {
 		runLogs(os.Args[2:])
 	case "exec":
 		runExec(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println("apricot", version)
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -39,11 +57,13 @@ USAGE:
   apricot <command> [options]
 
 COMMANDS:
-  up      Start services defined in docker-compose.yaml
-  down    Stop and remove services
-  ps      List containers for the current project
-  logs    Show logs for services
-  exec    Run a command in a running service container
+  up       Start services defined in docker-compose.yaml
+  build    Build images defined in docker-compose.yaml
+  down     Stop and remove services
+  ps       List containers for the current project
+  logs     Show logs for services
+  exec     Run a command in a running service container
+  version  Show version
 
 OPTIONS (common):
   -f <file>     Path to docker-compose.yaml (default: docker-compose.yaml)

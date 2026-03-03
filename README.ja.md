@@ -41,6 +41,15 @@ apricot up -p myproject                    # プロジェクト名を指定
 
 `--scale` を指定したサービスのコンテナ名は `<project>-<service>-<index>` 形式になります（例: `myapp-web-1`, `myapp-web-2`）。
 
+### build
+
+`docker-compose.yaml` で定義されたイメージをビルドします。
+
+```bash
+apricot build           # 全サービスをビルド
+apricot build web       # 特定サービスをビルド
+```
+
 ### down
 
 サービスを停止・削除します。
@@ -100,6 +109,7 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | フィールド | 対応 |
 |---|---|
 | `image` | ✅ |
+| `build` | ✅ |
 | `ports` | ✅ |
 | `volumes` | ✅ |
 | `environment` | ✅ |

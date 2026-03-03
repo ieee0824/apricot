@@ -42,6 +42,15 @@ apricot up -p myproject                    # specify project name
 
 Scaled containers are named `<project>-<service>-<index>` (e.g. `myapp-web-1`, `myapp-web-2`).
 
+### build
+
+Build images defined in `docker-compose.yaml`.
+
+```bash
+apricot build           # build all services
+apricot build web       # build specific service
+```
+
 ### down
 
 Stop and remove services.
@@ -101,6 +110,7 @@ apricot exec -w /app web pwd    # specify working directory
 | Field | Supported |
 |---|---|
 | `image` | ✅ |
+| `build` | ✅ |
 | `ports` | ✅ |
 | `volumes` | ✅ |
 | `environment` | ✅ |
