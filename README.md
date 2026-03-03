@@ -8,6 +8,12 @@ docker-compose.yaml をそのまま読み込める
 ## インストール
 
 ```bash
+go install github.com/ieee0824/apricot/cmd/apricot@latest
+```
+
+ソースからビルドする場合:
+
+```bash
 go build -o /usr/local/bin/apricot ./cmd/apricot/
 ```
 
