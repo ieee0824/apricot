@@ -408,6 +408,100 @@ func TestEnsureBindMountDirs(t *testing.T) {
 	}
 }
 
+func TestResolveVolumeHostPath_Relative(t *testing.T) {
+	got := resolveVolumeHostPath("./data:/data", "/project")
+	if got != "/project/data:/data" {
+		t.Errorf("got %q, want %q", got, "/project/data:/data")
+	}
+}
+
+func TestResolveVolumeHostPath_Absolute(t *testing.T) {
+	got := resolveVolumeHostPath("/abs/data:/data", "/project")
+	if got != "/abs/data:/data" {
+		t.Errorf("got %q, want %q", got, "/abs/data:/data")
+	}
+}
+
+func TestResolveVolumeHostPath_Named(t *testing.T) {
+	got := resolveVolumeHostPath("myvolume:/data", "/project")
+	if got != "myvolume:/data" {
+		t.Errorf("named volume should be unchanged, got %q", got)
+	}
+}
+
+func TestResolveVolumeHostPath_NoColon(t *testing.T) {
+	got := resolveVolumeHostPath("/data", "/project")
+	if got != "/data" {
+		t.Errorf("got %q, want %q", got, "/data")
+	}
+}
+
+func TestEnsureBindMountDirs_RelativePath(t *testing.T) {
+	base := t.TempDir()
+	volumes := []string{"./subdir:/container/path"}
+	if err := ensureBindMountDirs(volumes, base); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	info, err := os.Stat(base + "/subdir")
+	if err != nil {
+		t.Fatalf("directory not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("expected directory")
+	}
+}
+
+func TestResolveProjectName_Explicit(t *testing.T) {
+	got := resolveProjectName("myproject")
+	if got != "myproject" {
+		t.Errorf("got %q, want %q", got, "myproject")
+	}
+}
+
+func TestResolveProjectName_FromCwd(t *testing.T) {
+	got := resolveProjectName("")
+	if got == "" {
+		t.Error("expected non-empty project name from cwd")
+	}
+}
+
+func TestBuildRunArgs_EnvFile_AbsolutePath(t *testing.T) {
+	svc := compose.Service{
+		Image:   "myapp",
+		EnvFile: []interface{}{"/abs/.env"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "/some/dir", svc, cf)
+	assertContainsSequence(t, args, "--env-file", "/abs/.env")
+}
+
+func TestBuildRunArgs_EnvFile_RelativePath(t *testing.T) {
+	svc := compose.Service{
+		Image:   "myapp",
+		EnvFile: []interface{}{".env"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "/project/dir", svc, cf)
+	assertContainsSequence(t, args, "--env-file", "/project/dir/.env")
+}
+
+func TestBuildRunArgs_RelativeVolume(t *testing.T) {
+	svc := compose.Service{
+		Image:   "myapp",
+		Volumes: []string{"./data:/data"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "/project", svc, cf)
+	assertContainsSequence(t, args, "-v", "/project/data:/data")
+}
+
+func TestBuildRunArgs_CPUs_Float(t *testing.T) {
+	svc := compose.Service{Image: "myapp", CPUs: 0.5}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "-c", "1") // ceil(0.5) = 1
+}
+
 // helpers
 
 func assertContains(t *testing.T, args []string, want string) {

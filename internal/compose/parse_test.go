@@ -377,6 +377,27 @@ func TestToStringSlice_DNSSearch(t *testing.T) {
 	}
 }
 
+func TestToInt_Int(t *testing.T) {
+	v, ok := toInt(42)
+	if !ok || v != 42 {
+		t.Errorf("got (%d, %v), want (42, true)", v, ok)
+	}
+}
+
+func TestToInt_Float64(t *testing.T) {
+	v, ok := toInt(float64(3))
+	if !ok || v != 3 {
+		t.Errorf("got (%d, %v), want (3, true)", v, ok)
+	}
+}
+
+func TestToInt_Invalid(t *testing.T) {
+	_, ok := toInt("not a number")
+	if ok {
+		t.Error("expected false for string input")
+	}
+}
+
 func stringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
