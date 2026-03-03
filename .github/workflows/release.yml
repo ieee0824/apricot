@@ -31,3 +31,42 @@ jobs:
           files: |
             apricot_darwin_arm64.tar.gz
             apricot_darwin_arm64.tar.gz.sha256
+
+      - name: Update homebrew-tap formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION=${{ github.ref_name }}
+          SHA256=$(sha256sum apricot_darwin_arm64.tar.gz | awk '{print $1}')
+
+          git clone https://x-access-token:${GH_TOKEN}@github.com/ieee0824/homebrew-tap.git
+          cd homebrew-tap
+
+          cat > Formula/apricot.rb << EOF
+          class Apricot < Formula
+            desc "Docker Compose alternative for Apple Container"
+            homepage "https://github.com/ieee0824/apricot"
+            version "${VERSION#v}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/ieee0824/apricot/releases/download/${VERSION}/apricot_darwin_arm64.tar.gz"
+                sha256 "${SHA256}"
+              end
+            end
+
+            def install
+              bin.install "apricot"
+            end
+
+            test do
+              assert_match "apricot #{version}", shell_output("#{bin}/apricot version")
+            end
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/apricot.rb
+          git commit -m "chore: apricot を ${VERSION} に更新"
+          git push
