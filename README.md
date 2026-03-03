@@ -119,7 +119,7 @@ apricot exec -w /app web pwd    # specify working directory
 | `user` | ✅ |
 | `entrypoint` | ✅ |
 | `command` | ✅ |
-| `networks` | ✅ |
+| `networks` | ⚠️ (macOS 26+) |
 | `labels` | ✅ |
 | `cpus` | ✅ |
 | `mem_limit` | ✅ |
@@ -135,3 +135,7 @@ apricot exec -w /app web pwd    # specify working directory
 | `depends_on` | ✅ (startup order only) |
 | `container_name` | ✅ |
 | `restart` | ❌ (not supported) |
+
+## Limitations
+
+- **networks**: Non-default network configuration requires macOS 26 or newer (Apple Container runtime limitation). On older macOS versions, `networks` settings are automatically skipped with a warning.

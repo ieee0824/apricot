@@ -12,6 +12,34 @@ import (
 	"github.com/ieee0824/apricot/internal/runner"
 )
 
+// supportsNetworks reports whether the current macOS version supports
+// non-default network configuration (requires macOS 26+).
+func supportsNetworks() bool {
+	v := macOSProductVersion()
+	if v == "" {
+		return false
+	}
+	major, ok := parseMacOSMajorVersion(v)
+	if !ok {
+		return false
+	}
+	return major >= 26
+}
+
+// parseMacOSMajorVersion extracts the major version number from a
+// macOS product version string like "15.3.1".
+func parseMacOSMajorVersion(version string) (int, bool) {
+	parts := strings.SplitN(version, ".", 2)
+	if len(parts) == 0 {
+		return 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, false
+	}
+	return major, true
+}
+
 // scaleMap holds per-service scale counts, populated via repeated --scale flags.
 type scaleMap map[string]int
 
@@ -51,6 +79,18 @@ func runUp(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Skip networks on macOS < 26 (Apple Container limitation)
+	if !supportsNetworks() {
+		if len(cf.Networks) > 0 {
+			fmt.Fprintln(os.Stderr, "Warning: network configuration requires macOS 26 or newer, skipping networks")
+		}
+		cf.Networks = nil
+		for name, svc := range cf.Services {
+			svc.Networks = nil
+			cf.Services[name] = svc
+		}
 	}
 
 	// Create networks (skip external networks)
