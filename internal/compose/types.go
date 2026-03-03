@@ -37,6 +37,8 @@ type Network struct {
 	Driver   string            `yaml:"driver"`
 	Internal bool              `yaml:"internal"`
 	Labels   map[string]string `yaml:"labels"`
+	External bool              `yaml:"external"`
+	Name     string            `yaml:"name"` // override network name when external
 }
 
 // Volume represents a volume in docker-compose.yaml.

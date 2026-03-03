@@ -25,8 +25,11 @@ func runUp(args []string) {
 		os.Exit(1)
 	}
 
-	// Create networks
-	for name := range cf.Networks {
+	// Create networks (skip external networks)
+	for name, net := range cf.Networks {
+		if net.External {
+			continue
+		}
 		networkName := projectName + "_" + name
 		fmt.Printf("Creating network %s\n", networkName)
 		if err := runner.NetworkCreate(networkName); err != nil {
@@ -90,15 +93,15 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 	}
 
 	// Networks
-	networkNames := compose.ToNetworkNames(svc.Networks)
-	if len(networkNames) == 0 && len(cf.Networks) > 0 {
+	networkKeys := compose.ToNetworkNames(svc.Networks)
+	if len(networkKeys) == 0 && len(cf.Networks) > 0 {
 		// attach to all project networks if none specified
 		for n := range cf.Networks {
-			networkNames = append(networkNames, n)
+			networkKeys = append(networkKeys, n)
 		}
 	}
-	for _, n := range networkNames {
-		args = append(args, "--network", projectName+"_"+n)
+	for _, key := range networkKeys {
+		args = append(args, "--network", compose.ResolveNetworkName(key, projectName, cf.Networks[key]))
 	}
 
 	// Labels

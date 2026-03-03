@@ -76,10 +76,14 @@ func containersForProject(containers []runner.Container, projectName string) []r
 	return result
 }
 
-// networkNamesForProject returns the qualified network names for a project.
+// networkNamesForProject returns the qualified network names to delete for a project.
+// External networks are skipped since they are not managed by apricot.
 func networkNamesForProject(networks map[string]compose.Network, projectName string) []string {
 	result := make([]string, 0, len(networks))
-	for name := range networks {
+	for name, net := range networks {
+		if net.External {
+			continue
+		}
 		result = append(result, projectName+"_"+name)
 	}
 	return result

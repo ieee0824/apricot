@@ -186,6 +186,30 @@ volumes:
 	}
 }
 
+func TestResolveNetworkName_Normal(t *testing.T) {
+	got := ResolveNetworkName("frontend", "myproject", Network{})
+	want := "myproject_frontend"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveNetworkName_External(t *testing.T) {
+	got := ResolveNetworkName("existing", "myproject", Network{External: true})
+	want := "existing"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolveNetworkName_ExternalWithName(t *testing.T) {
+	got := ResolveNetworkName("mynet", "myproject", Network{External: true, Name: "actual-net"})
+	want := "actual-net"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load("/nonexistent/path/docker-compose.yaml")
 	if err == nil {

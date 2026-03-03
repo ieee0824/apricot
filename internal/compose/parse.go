@@ -99,6 +99,18 @@ func ToDependsOn(v interface{}) []string {
 	return ToNetworkNames(v)
 }
 
+// ResolveNetworkName returns the actual network name to pass to --network.
+// External networks use their own name (or the name: override), not the project prefix.
+func ResolveNetworkName(key, projectName string, net Network) string {
+	if net.External {
+		if net.Name != "" {
+			return net.Name
+		}
+		return key
+	}
+	return projectName + "_" + key
+}
+
 // SortServices returns service names sorted by depends_on dependency order.
 func SortServices(services map[string]Service) ([]string, error) {
 	visited := make(map[string]bool)

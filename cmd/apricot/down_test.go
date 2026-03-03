@@ -52,6 +52,22 @@ func TestNetworkNamesForProject(t *testing.T) {
 	}
 }
 
+func TestNetworkNamesForProject_SkipsExternal(t *testing.T) {
+	networks := map[string]compose.Network{
+		"internal": {},
+		"external": {External: true},
+	}
+	got := networkNamesForProject(networks, "myproject")
+	for _, name := range got {
+		if name == "myproject_external" {
+			t.Errorf("external network should not be included in deletion list")
+		}
+	}
+	if len(got) != 1 || got[0] != "myproject_internal" {
+		t.Errorf("expected [myproject_internal], got %v", got)
+	}
+}
+
 func TestNetworkNamesForProject_Empty(t *testing.T) {
 	got := networkNamesForProject(nil, "myproject")
 	if len(got) != 0 {
