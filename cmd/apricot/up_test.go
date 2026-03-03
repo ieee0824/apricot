@@ -33,7 +33,7 @@ func TestBuildRunArgs_Basic(t *testing.T) {
 		Ports: []string{"8080:80"},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("myproject-web", "web", "myproject", svc, cf)
+	args := buildRunArgs("myproject-web", "web", "myproject", "", svc, cf)
 
 	assertContainsSequence(t, args, "--name", "myproject-web")
 	assertContainsSequence(t, args, "-p", "8080:80")
@@ -48,7 +48,7 @@ func TestBuildRunArgs_Environment_Map(t *testing.T) {
 		Environment: map[string]interface{}{"FOO": "bar"},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "-e", "FOO=bar")
 }
@@ -59,7 +59,7 @@ func TestBuildRunArgs_Environment_Slice(t *testing.T) {
 		Environment: []interface{}{"FOO=bar", "BAZ=qux"},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "-e", "FOO=bar")
 	assertContainsSequence(t, args, "-e", "BAZ=qux")
@@ -68,12 +68,12 @@ func TestBuildRunArgs_Environment_Slice(t *testing.T) {
 func TestBuildRunArgs_Volumes(t *testing.T) {
 	svc := compose.Service{
 		Image:   "myapp",
-		Volumes: []string{"./data:/data", "/tmp:/tmp"},
+		Volumes: []string{"/abs/data:/data", "/tmp:/tmp"},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
-	assertContainsSequence(t, args, "-v", "./data:/data")
+	assertContainsSequence(t, args, "-v", "/abs/data:/data")
 	assertContainsSequence(t, args, "-v", "/tmp:/tmp")
 }
 
@@ -85,7 +85,7 @@ func TestBuildRunArgs_Network_Explicit(t *testing.T) {
 	cf := &compose.ComposeFile{
 		Networks: map[string]compose.Network{"frontend": {}},
 	}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "--network", "p_frontend")
 }
@@ -96,7 +96,7 @@ func TestBuildRunArgs_Network_AutoAttach(t *testing.T) {
 	cf := &compose.ComposeFile{
 		Networks: map[string]compose.Network{"default": {}},
 	}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "--network", "p_default")
 }
@@ -104,7 +104,7 @@ func TestBuildRunArgs_Network_AutoAttach(t *testing.T) {
 func TestBuildRunArgs_WorkingDir(t *testing.T) {
 	svc := compose.Service{Image: "myapp", WorkingDir: "/app"}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "-w", "/app")
 }
@@ -112,7 +112,7 @@ func TestBuildRunArgs_WorkingDir(t *testing.T) {
 func TestBuildRunArgs_User(t *testing.T) {
 	svc := compose.Service{Image: "myapp", User: "1000:1000"}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "-u", "1000:1000")
 }
@@ -120,7 +120,7 @@ func TestBuildRunArgs_User(t *testing.T) {
 func TestBuildRunArgs_Resources(t *testing.T) {
 	svc := compose.Service{Image: "myapp", CPUs: 2.0, MemLimit: "512M"}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "-c", "2")
 	assertContainsSequence(t, args, "-m", "512M")
@@ -129,7 +129,7 @@ func TestBuildRunArgs_Resources(t *testing.T) {
 func TestBuildRunArgs_Flags(t *testing.T) {
 	svc := compose.Service{Image: "myapp", Tty: true, StdinOpen: true, ReadOnly: true}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContains(t, args, "-t")
 	assertContains(t, args, "-i")
@@ -143,7 +143,7 @@ func TestBuildRunArgs_Entrypoint_And_Command(t *testing.T) {
 		Command:    []interface{}{"arg1", "arg2"},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "--entrypoint", "/entrypoint.sh")
 	// Command args come after image
@@ -163,7 +163,7 @@ func TestBuildRunArgs_ImageIsLast_BeforeCommand(t *testing.T) {
 		Command: []interface{}{"nginx", "-g", "daemon off;"},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-web", "web", "p", svc, cf)
+	args := buildRunArgs("p-web", "web", "p", "", svc, cf)
 
 	imgIdx := slices.Index(args, "nginx:latest")
 	if imgIdx == -1 {
@@ -274,21 +274,21 @@ func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
 func TestBuildRunArgs_Init(t *testing.T) {
 	svc := compose.Service{Image: "myapp", Init: true}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertContains(t, args, "--init")
 }
 
 func TestBuildRunArgs_DNSSearch(t *testing.T) {
 	svc := compose.Service{Image: "myapp", DNSSearch: []interface{}{"example.com"}}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertContainsSequence(t, args, "--dns-search", "example.com")
 }
 
 func TestBuildRunArgs_DNSOpt(t *testing.T) {
 	svc := compose.Service{Image: "myapp", DNSOpt: []interface{}{"ndots:2"}}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertContainsSequence(t, args, "--dns-option", "ndots:2")
 }
 
@@ -300,7 +300,7 @@ func TestBuildRunArgs_Ulimits(t *testing.T) {
 		},
 	}
 	cf := &compose.ComposeFile{}
-	args := buildRunArgs("p-app", "app", "p", svc, cf)
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertContainsSequence(t, args, "--ulimit", "nofile=1024:2048")
 }
 
@@ -396,7 +396,7 @@ func TestEnsureBindMountDirs(t *testing.T) {
 		dir + "/sub/dir:/container/path",
 		"namedvol:/data",
 	}
-	if err := ensureBindMountDirs(volumes); err != nil {
+	if err := ensureBindMountDirs(volumes, ""); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	info, err := os.Stat(dir + "/sub/dir")
