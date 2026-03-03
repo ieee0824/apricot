@@ -7,9 +7,20 @@ type ComposeFile struct {
 	Volumes  map[string]Volume  `yaml:"volumes"`
 }
 
+// BuildConfig holds the resolved build configuration for a service.
+type BuildConfig struct {
+	Context    string
+	Dockerfile string
+	Args       map[string]string
+	Target     string
+	Labels     map[string]string
+	NoCache    bool
+}
+
 // Service represents a service in docker-compose.yaml.
 type Service struct {
 	Image         string      `yaml:"image"`
+	Build         interface{} `yaml:"build"` // string or map
 	Command       interface{} `yaml:"command"`     // string or []string
 	Entrypoint    interface{} `yaml:"entrypoint"`  // string or []string
 	Environment   interface{} `yaml:"environment"` // map[string]string or []string

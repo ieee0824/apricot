@@ -55,6 +55,24 @@ func runUp(args []string) {
 
 	for _, name := range order {
 		svc := cf.Services[name]
+
+		// Build image if build: is defined
+		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
+			imageName := svc.Image
+			if imageName == "" {
+				imageName = projectName + "_" + name
+			}
+			fmt.Printf("Building %s\n", imageName)
+			if err := runner.Build(buildImageArgs(imageName, bc)); err != nil {
+				fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
+				os.Exit(1)
+			}
+			// If image: was not set, use the built image name for run
+			if svc.Image == "" {
+				svc.Image = imageName
+			}
+		}
+
 		containerName := containerNameFor(projectName, name, svc.ContainerName)
 		args := buildRunArgs(containerName, name, projectName, svc, cf)
 
@@ -166,6 +184,38 @@ func buildRunArgs(containerName, serviceName, projectName string, svc compose.Se
 
 	// Command (additional arguments after image)
 	args = append(args, compose.ToStringSlice(svc.Command)...)
+
+	return args
+}
+
+// buildImageArgs returns the args for `container build` (options + context).
+func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
+	var args []string
+
+	args = append(args, "-t", imageName)
+
+	if bc.Dockerfile != "" {
+		args = append(args, "-f", bc.Dockerfile)
+	}
+	if bc.Target != "" {
+		args = append(args, "--target", bc.Target)
+	}
+	if bc.NoCache {
+		args = append(args, "--no-cache")
+	}
+	for k, v := range bc.Args {
+		args = append(args, "--build-arg", k+"="+v)
+	}
+	for k, v := range bc.Labels {
+		args = append(args, "-l", k+"="+v)
+	}
+
+	// Context directory (must be last)
+	ctx := bc.Context
+	if ctx == "" {
+		ctx = "."
+	}
+	args = append(args, ctx)
 
 	return args
 }

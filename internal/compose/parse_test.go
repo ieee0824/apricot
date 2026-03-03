@@ -210,6 +210,65 @@ func TestResolveNetworkName_ExternalWithName(t *testing.T) {
 	}
 }
 
+func TestToBuildConfig_String(t *testing.T) {
+	bc := ToBuildConfig("./app")
+	if bc == nil {
+		t.Fatal("expected non-nil BuildConfig")
+	}
+	if bc.Context != "./app" {
+		t.Errorf("expected context ./app, got %q", bc.Context)
+	}
+}
+
+func TestToBuildConfig_Nil(t *testing.T) {
+	if ToBuildConfig(nil) != nil {
+		t.Error("expected nil for nil input")
+	}
+}
+
+func TestToBuildConfig_Map(t *testing.T) {
+	input := map[string]interface{}{
+		"context":    "./src",
+		"dockerfile": "Dockerfile.dev",
+		"target":     "builder",
+		"no_cache":   true,
+		"args":       map[string]interface{}{"ENV": "prod"},
+		"labels":     map[string]interface{}{"app": "myapp"},
+	}
+	bc := ToBuildConfig(input)
+	if bc == nil {
+		t.Fatal("expected non-nil BuildConfig")
+	}
+	if bc.Context != "./src" {
+		t.Errorf("context: got %q", bc.Context)
+	}
+	if bc.Dockerfile != "Dockerfile.dev" {
+		t.Errorf("dockerfile: got %q", bc.Dockerfile)
+	}
+	if bc.Target != "builder" {
+		t.Errorf("target: got %q", bc.Target)
+	}
+	if !bc.NoCache {
+		t.Error("no_cache should be true")
+	}
+	if bc.Args["ENV"] != "prod" {
+		t.Errorf("args: got %v", bc.Args)
+	}
+	if bc.Labels["app"] != "myapp" {
+		t.Errorf("labels: got %v", bc.Labels)
+	}
+}
+
+func TestToBuildConfig_ArgsSlice(t *testing.T) {
+	input := map[string]interface{}{
+		"args": []interface{}{"FOO=bar", "BAZ=qux"},
+	}
+	bc := ToBuildConfig(input)
+	if bc.Args["FOO"] != "bar" || bc.Args["BAZ"] != "qux" {
+		t.Errorf("args slice parse failed: %v", bc.Args)
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := Load("/nonexistent/path/docker-compose.yaml")
 	if err == nil {

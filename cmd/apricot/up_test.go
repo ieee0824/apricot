@@ -180,6 +180,47 @@ func TestBuildRunArgs_ImageIsLast_BeforeCommand(t *testing.T) {
 	}
 }
 
+func TestBuildImageArgs_Simple(t *testing.T) {
+	bc := &compose.BuildConfig{Context: "./app"}
+	args := buildImageArgs("myimage:latest", bc)
+	assertContainsSequence(t, args, "-t", "myimage:latest")
+	if args[len(args)-1] != "./app" {
+		t.Errorf("context must be last arg, got %v", args)
+	}
+}
+
+func TestBuildImageArgs_DefaultContext(t *testing.T) {
+	bc := &compose.BuildConfig{}
+	args := buildImageArgs("myimage", bc)
+	if args[len(args)-1] != "." {
+		t.Errorf("default context should be '.', got %v", args)
+	}
+}
+
+func TestBuildImageArgs_Dockerfile(t *testing.T) {
+	bc := &compose.BuildConfig{Context: ".", Dockerfile: "Dockerfile.dev"}
+	args := buildImageArgs("myimage", bc)
+	assertContainsSequence(t, args, "-f", "Dockerfile.dev")
+}
+
+func TestBuildImageArgs_Target(t *testing.T) {
+	bc := &compose.BuildConfig{Context: ".", Target: "builder"}
+	args := buildImageArgs("myimage", bc)
+	assertContainsSequence(t, args, "--target", "builder")
+}
+
+func TestBuildImageArgs_NoCache(t *testing.T) {
+	bc := &compose.BuildConfig{Context: ".", NoCache: true}
+	args := buildImageArgs("myimage", bc)
+	assertContains(t, args, "--no-cache")
+}
+
+func TestBuildImageArgs_BuildArgs(t *testing.T) {
+	bc := &compose.BuildConfig{Context: ".", Args: map[string]string{"ENV": "prod"}}
+	args := buildImageArgs("myimage", bc)
+	assertContainsSequence(t, args, "--build-arg", "ENV=prod")
+}
+
 func TestBuildNetworkCreateArgs_Simple(t *testing.T) {
 	net := compose.Network{}
 	args := buildNetworkCreateArgs("myproject_frontend", net)

@@ -99,6 +99,65 @@ func ToDependsOn(v interface{}) []string {
 	return ToNetworkNames(v)
 }
 
+// ToBuildConfig converts the build: field (string or map) to a BuildConfig.
+// Returns nil if v is nil (no build defined).
+func ToBuildConfig(v interface{}) *BuildConfig {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case string:
+		return &BuildConfig{Context: val}
+	case map[string]interface{}:
+		bc := &BuildConfig{}
+		if ctx, ok := val["context"].(string); ok {
+			bc.Context = ctx
+		}
+		if df, ok := val["dockerfile"].(string); ok {
+			bc.Dockerfile = df
+		}
+		if target, ok := val["target"].(string); ok {
+			bc.Target = target
+		}
+		if noCache, ok := val["no_cache"].(bool); ok {
+			bc.NoCache = noCache
+		}
+		bc.Args = toStringMap(val["args"])
+		bc.Labels = toStringMap(val["labels"])
+		return bc
+	}
+	return nil
+}
+
+// toStringMap converts a map[string]interface{} or []interface{} (KEY=VAL) to map[string]string.
+func toStringMap(v interface{}) map[string]string {
+	if v == nil {
+		return nil
+	}
+	switch val := v.(type) {
+	case map[string]interface{}:
+		result := make(map[string]string, len(val))
+		for k, v := range val {
+			result[k] = fmt.Sprintf("%v", v)
+		}
+		return result
+	case []interface{}:
+		result := make(map[string]string)
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				for i, c := range s {
+					if c == '=' {
+						result[s[:i]] = s[i+1:]
+						break
+					}
+				}
+			}
+		}
+		return result
+	}
+	return nil
+}
+
 // ResolveNetworkName returns the actual network name to pass to --network.
 // External networks use their own name (or the name: override), not the project prefix.
 func ResolveNetworkName(key, projectName string, net Network) string {
