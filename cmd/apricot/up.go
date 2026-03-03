@@ -153,6 +153,12 @@ func runUp(args []string) {
 			} else {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
+			// Ensure bind mount host directories exist
+			if err := ensureBindMountDirs(svc.Volumes); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+
 			runArgs := buildRunArgs(containerName, name, projectName, svc, cf)
 
 			fmt.Printf("Starting %s\n", containerName)
@@ -326,6 +332,36 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 	args = append(args, ctx)
 
 	return args
+}
+
+// ensureBindMountDirs creates host directories for bind mount volumes
+// that don't exist yet. Named volumes (no path prefix) are skipped.
+func ensureBindMountDirs(volumes []string) error {
+	for _, v := range volumes {
+		hostPath := parseBindMountHostPath(v)
+		if hostPath == "" {
+			continue
+		}
+		if err := os.MkdirAll(hostPath, 0755); err != nil {
+			return fmt.Errorf("failed to create bind mount directory %q: %w", hostPath, err)
+		}
+	}
+	return nil
+}
+
+// parseBindMountHostPath extracts the host path from a volume spec like
+// "host:container[:opts]". Returns "" for named volumes.
+func parseBindMountHostPath(volume string) string {
+	parts := strings.SplitN(volume, ":", 2)
+	if len(parts) < 2 {
+		return ""
+	}
+	host := parts[0]
+	// Named volumes don't start with / . or ~
+	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
+		return ""
+	}
+	return host
 }
 
 // buildNetworkCreateArgs returns the args for `container network create` (options + name).
