@@ -346,6 +346,27 @@ func TestScaleMap_Set_Zero(t *testing.T) {
 	}
 }
 
+func TestParseMacOSMajorVersion(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    int
+		wantOK  bool
+	}{
+		{"15.3.1", 15, true},
+		{"26.0", 26, true},
+		{"26", 26, true},
+		{"", 0, false},
+		{"abc", 0, false},
+	}
+	for _, tt := range tests {
+		got, ok := parseMacOSMajorVersion(tt.input)
+		if got != tt.want || ok != tt.wantOK {
+			t.Errorf("parseMacOSMajorVersion(%q) = (%d, %v), want (%d, %v)",
+				tt.input, got, ok, tt.want, tt.wantOK)
+		}
+	}
+}
+
 // helpers
 
 func assertContains(t *testing.T, args []string, want string) {
