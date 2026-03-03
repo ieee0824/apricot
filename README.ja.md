@@ -118,7 +118,7 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | `user` | ✅ |
 | `entrypoint` | ✅ |
 | `command` | ✅ |
-| `networks` | ✅ |
+| `networks` | ⚠️ (macOS 26+) |
 | `labels` | ✅ |
 | `cpus` | ✅ |
 | `mem_limit` | ✅ |
@@ -134,3 +134,7 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | `depends_on` | ✅ (起動順序のみ) |
 | `container_name` | ✅ |
 | `restart` | ❌ (未対応) |
+
+## 制限事項
+
+- **networks**: デフォルト以外のネットワーク設定には macOS 26 以降が必要です（Apple Container ランタイムの制限）。macOS 26 未満では `networks` 設定は警告を出して自動的にスキップされます。
