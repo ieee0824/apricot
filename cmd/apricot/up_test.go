@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"slices"
 	"testing"
 
@@ -348,9 +349,9 @@ func TestScaleMap_Set_Zero(t *testing.T) {
 
 func TestParseMacOSMajorVersion(t *testing.T) {
 	tests := []struct {
-		input   string
-		want    int
-		wantOK  bool
+		input  string
+		want   int
+		wantOK bool
 	}{
 		{"15.3.1", 15, true},
 		{"26.0", 26, true},
@@ -364,6 +365,46 @@ func TestParseMacOSMajorVersion(t *testing.T) {
 			t.Errorf("parseMacOSMajorVersion(%q) = (%d, %v), want (%d, %v)",
 				tt.input, got, ok, tt.want, tt.wantOK)
 		}
+	}
+}
+
+func TestParseBindMountHostPath(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"./data:/data", "./data"},
+		{"./.tmp/share:/share", "./.tmp/share"},
+		{"/var/data:/data", "/var/data"},
+		{"~/data:/data", "~/data"},
+		{"./data:/data:ro", "./data"},
+		{"myvolume:/data", ""},        // named volume
+		{"postgres_data:/var/lib", ""}, // named volume
+		{"/data", ""},                  // container path only
+	}
+	for _, tt := range tests {
+		got := parseBindMountHostPath(tt.input)
+		if got != tt.want {
+			t.Errorf("parseBindMountHostPath(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestEnsureBindMountDirs(t *testing.T) {
+	dir := t.TempDir()
+	volumes := []string{
+		dir + "/sub/dir:/container/path",
+		"namedvol:/data",
+	}
+	if err := ensureBindMountDirs(volumes); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	info, err := os.Stat(dir + "/sub/dir")
+	if err != nil {
+		t.Fatalf("directory not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("expected directory")
 	}
 }
 
