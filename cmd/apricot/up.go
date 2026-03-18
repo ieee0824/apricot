@@ -127,6 +127,39 @@ func runUp(args []string) {
 		os.Exit(1)
 	}
 
+	// Filter to only requested services (and their dependencies) if specified
+	if targets := fs.Args(); len(targets) > 0 {
+		needed := make(map[string]bool)
+		var collect func(string)
+		collect = func(name string) {
+			if needed[name] {
+				return
+			}
+			svc, ok := cf.Services[name]
+			if !ok {
+				return
+			}
+			needed[name] = true
+			for _, dep := range compose.ToDependsOn(svc.DependsOn) {
+				collect(dep)
+			}
+		}
+		for _, t := range targets {
+			if _, ok := cf.Services[t]; !ok {
+				fmt.Fprintf(os.Stderr, "Error: no such service: %s\n", t)
+				os.Exit(1)
+			}
+			collect(t)
+		}
+		filtered := make([]string, 0, len(order))
+		for _, name := range order {
+			if needed[name] {
+				filtered = append(filtered, name)
+			}
+		}
+		order = filtered
+	}
+
 	// Collect started container names for log streaming (foreground mode)
 	type startedContainer struct {
 		name    string
