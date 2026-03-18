@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"slices"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ieee0824/apricot/internal/compose"
@@ -378,7 +380,7 @@ func TestParseBindMountHostPath(t *testing.T) {
 		{"/var/data:/data", "/var/data"},
 		{"~/data:/data", "~/data"},
 		{"./data:/data:ro", "./data"},
-		{"myvolume:/data", ""},        // named volume
+		{"myvolume:/data", ""},         // named volume
 		{"postgres_data:/var/lib", ""}, // named volume
 		{"/data", ""},                  // container path only
 	}
@@ -500,6 +502,73 @@ func TestBuildRunArgs_CPUs_Float(t *testing.T) {
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertContainsSequence(t, args, "-c", "1") // ceil(0.5) = 1
+}
+
+func TestBuildRunArgs_Labels_Map(t *testing.T) {
+	svc := compose.Service{
+		Image: "myapp",
+		Labels: map[string]interface{}{
+			"com.example.role": "worker",
+			"com.example.tier": "backend",
+		},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+
+	assertContainsSequence(t, args, "-l", "com.example.role=worker")
+	assertContainsSequence(t, args, "-l", "com.example.tier=backend")
+}
+
+func TestBuildRunArgs_ExternalNetworkWithCustomName(t *testing.T) {
+	svc := compose.Service{
+		Image:    "myapp",
+		Networks: []interface{}{"shared"},
+	}
+	cf := &compose.ComposeFile{
+		Networks: map[string]compose.Network{
+			"shared": {External: true, Name: "company-shared"},
+		},
+	}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+
+	assertContainsSequence(t, args, "--network", "company-shared")
+}
+
+func TestBuildRunArgs_TmpfsAndDNS_StringForms(t *testing.T) {
+	svc := compose.Service{
+		Image:      "myapp",
+		Tmpfs:      "/run",
+		DNS:        "1.1.1.1",
+		Entrypoint: "/bootstrap.sh",
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+
+	assertContainsSequence(t, args, "--tmpfs", "/run")
+	assertContainsSequence(t, args, "--dns", "1.1.1.1")
+	assertContainsSequence(t, args, "--entrypoint", "/bootstrap.sh")
+}
+
+func TestScaleMap_String(t *testing.T) {
+	s := scaleMap{"web": 3, "db": 1}
+	parts := strings.Split(s.String(), ",")
+	sort.Strings(parts)
+	want := []string{"db=1", "web=3"}
+	if !slices.Equal(parts, want) {
+		t.Fatalf("scaleMap.String() = %q, parts %v, want %v", s.String(), parts, want)
+	}
+}
+
+func TestLabelSlice_Map(t *testing.T) {
+	got := labelSlice(map[string]interface{}{
+		"com.example.one": "1",
+		"com.example.two": "2",
+	})
+	sort.Strings(got)
+	want := []string{"com.example.one=1", "com.example.two=2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("labelSlice() = %v, want %v", got, want)
+	}
 }
 
 // helpers

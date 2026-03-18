@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestExpandEnv(t *testing.T) {
+	t.Setenv("SET_VALUE", "hello")
+	t.Setenv("EMPTY_VALUE", "")
+
+	got := expandEnv("${SET_VALUE} ${MISSING:-fallback} ${EMPTY_VALUE:-default} ${EMPTY_VALUE-default} ${MISSING-default}")
+	want := "hello fallback default  default"
+	if got != want {
+		t.Fatalf("expandEnv() = %q, want %q", got, want)
+	}
+}
+
 func TestToStringSlice(t *testing.T) {
 	tests := []struct {
 		name string
@@ -217,6 +228,71 @@ func TestToBuildConfig_String(t *testing.T) {
 	}
 	if bc.Context != "./app" {
 		t.Errorf("expected context ./app, got %q", bc.Context)
+	}
+}
+
+func TestToBuildConfig_MapArgsSliceAndLabelsMap(t *testing.T) {
+	bc := ToBuildConfig(map[string]interface{}{
+		"context":    "./app",
+		"dockerfile": "Dockerfile.dev",
+		"target":     "builder",
+		"no_cache":   true,
+		"args": []interface{}{
+			"GO_VERSION=1.24",
+			"APP_ENV=prod",
+		},
+		"labels": map[string]interface{}{
+			"org.example.role": "api",
+		},
+	})
+	if bc == nil {
+		t.Fatal("expected non-nil BuildConfig")
+	}
+	if bc.Context != "./app" {
+		t.Errorf("expected context ./app, got %q", bc.Context)
+	}
+	if bc.Dockerfile != "Dockerfile.dev" {
+		t.Errorf("expected dockerfile Dockerfile.dev, got %q", bc.Dockerfile)
+	}
+	if bc.Target != "builder" {
+		t.Errorf("expected target builder, got %q", bc.Target)
+	}
+	if !bc.NoCache {
+		t.Error("expected no_cache to be true")
+	}
+	if bc.Args["GO_VERSION"] != "1.24" || bc.Args["APP_ENV"] != "prod" {
+		t.Errorf("unexpected build args: %#v", bc.Args)
+	}
+	if bc.Labels["org.example.role"] != "api" {
+		t.Errorf("unexpected labels: %#v", bc.Labels)
+	}
+}
+
+func TestToUlimitSlice(t *testing.T) {
+	got := ToUlimitSlice(map[string]interface{}{
+		"nofile": 1024,
+		"nproc": map[string]interface{}{
+			"soft": 512.0,
+			"hard": 1024.0,
+		},
+		"memlock": map[string]interface{}{
+			"soft": 64,
+		},
+	})
+	sort.Strings(got)
+	want := []string{"memlock=64", "nofile=1024", "nproc=512:1024"}
+	if !stringSliceEqual(got, want) {
+		t.Fatalf("ToUlimitSlice() = %v, want %v", got, want)
+	}
+}
+
+func TestSortServices_MissingDependency(t *testing.T) {
+	services := map[string]Service{
+		"web": {DependsOn: []interface{}{"db"}},
+	}
+	_, err := SortServices(services)
+	if err == nil {
+		t.Fatal("expected error for missing dependency")
 	}
 }
 

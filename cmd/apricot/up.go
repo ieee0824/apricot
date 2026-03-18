@@ -303,7 +303,7 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	}
 
 	// Labels
-	for _, l := range compose.ToStringSlice(svc.Labels) {
+	for _, l := range labelSlice(svc.Labels) {
 		args = append(args, "-l", l)
 	}
 	// Always add project label
@@ -386,6 +386,21 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	args = append(args, compose.ToStringSlice(svc.Command)...)
 
 	return args
+}
+
+func labelSlice(v interface{}) []string {
+	if labels := compose.ToStringSlice(v); labels != nil {
+		return labels
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(m))
+	for k, value := range m {
+		result = append(result, fmt.Sprintf("%s=%v", k, value))
+	}
+	return result
 }
 
 // buildImageArgs returns the args for `container build` (options + context).
