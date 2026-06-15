@@ -20,7 +20,13 @@ import (
 // supportsNetworks reports whether the current macOS version supports
 // non-default network configuration (requires macOS 26+).
 func supportsNetworks() bool {
-	v := macOSProductVersion()
+	return supportsNetworksForVersion(macOSProductVersion())
+}
+
+// supportsNetworksForVersion reports whether the given macOS product version
+// string supports non-default network configuration (requires macOS 26+).
+// Empty or unparseable versions are treated as unsupported.
+func supportsNetworksForVersion(v string) bool {
 	if v == "" {
 		return false
 	}
@@ -69,6 +75,18 @@ func (s scaleMap) Set(v string) error {
 	return nil
 }
 
+// validateScaleTargets returns the names present in scale that do not
+// correspond to a defined service.
+func validateScaleTargets(scale scaleMap, services map[string]compose.Service) []string {
+	var unknown []string
+	for name := range scale {
+		if _, ok := services[name]; !ok {
+			unknown = append(unknown, name)
+		}
+	}
+	return unknown
+}
+
 func runUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	detach := fs.Bool("d", false, "Run containers in background")
@@ -85,6 +103,11 @@ func runUp(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Warn about --scale targets that don't match any defined service.
+	for _, name := range validateScaleTargets(scale, cf.Services) {
+		fmt.Fprintf(os.Stderr, "Warning: --scale references unknown service %q; ignoring\n", name)
 	}
 
 	// Skip networks on macOS < 26 (Apple Container limitation)
@@ -555,12 +578,9 @@ func resolveVolumeHostPath(volume, composeDir string) string {
 	if len(parts) < 2 {
 		return volume
 	}
-	host := parts[0]
-	// Normalize bare "." and ".." to "./" and "../" so they are recognized as
-	// relative bind-mount paths rather than being passed through as volume names.
-	if host == "." || host == ".." {
-		host = host + "/"
-	}
+	// Normalize bare "." and ".." so they are recognized as relative bind-mount
+	// paths rather than being passed through as volume names.
+	host := normalizeBareDot(parts[0])
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return volume // named volume, leave as-is
 	}
@@ -578,15 +598,22 @@ func parseBindMountHostPath(volume string) string {
 	if len(parts) < 2 {
 		return ""
 	}
-	host := parts[0]
-	if host == "." || host == ".." {
-		host = host + "/"
-	}
+	host := normalizeBareDot(parts[0])
 	// Named volumes don't start with / . or ~
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return ""
 	}
 	return expandTilde(host)
+}
+
+// normalizeBareDot rewrites a host path of exactly "." or ".." into host + "/"
+// so it is unambiguously treated as a relative path. Other values are returned
+// unchanged.
+func normalizeBareDot(host string) string {
+	if host == "." || host == ".." {
+		return host + "/"
+	}
+	return host
 }
 
 // expandTilde expands a leading ~ or ~/ to the user's home directory. Other

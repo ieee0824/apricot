@@ -19,6 +19,9 @@ func expandEnv(s string) string {
 	return os.Expand(s, func(key string) string {
 		if i := strings.Index(key, ":-"); i >= 0 {
 			name, def := key[:i], key[i+2:]
+			if name == "" {
+				return os.Getenv("")
+			}
 			if v := os.Getenv(name); v != "" {
 				return v
 			}
@@ -26,6 +29,9 @@ func expandEnv(s string) string {
 		}
 		if i := strings.Index(key, "-"); i >= 0 {
 			name, def := key[:i], key[i+1:]
+			if name == "" {
+				return os.Getenv("")
+			}
 			if v, ok := os.LookupEnv(name); ok {
 				return v
 			}
@@ -213,6 +219,8 @@ func ToUlimitSlice(v interface{}) []string {
 		switch u := val.(type) {
 		case int:
 			result = append(result, fmt.Sprintf("%s=%d", name, u))
+		case float64:
+			result = append(result, fmt.Sprintf("%s=%d", name, int(u)))
 		case map[string]interface{}:
 			soft, hasSoft := toInt(u["soft"])
 			hard, hasHard := toInt(u["hard"])

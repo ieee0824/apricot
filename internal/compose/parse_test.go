@@ -3,6 +3,7 @@ package compose
 import (
 	"os"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -471,6 +472,74 @@ func TestToInt_Invalid(t *testing.T) {
 	_, ok := toInt("not a number")
 	if ok {
 		t.Error("expected false for string input")
+	}
+}
+
+func TestLoad_InvalidYAML(t *testing.T) {
+	// Malformed YAML: an unclosed bracket in the image value.
+	yaml := `
+services:
+  web:
+    image: [nginx:latest
+`
+	f, err := os.CreateTemp("", "compose-invalid-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(yaml)
+	f.Close()
+
+	_, err = Load(f.Name())
+	if err == nil {
+		t.Fatal("expected error for invalid YAML, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse") {
+		t.Errorf("expected error containing %q, got %q", "failed to parse", err.Error())
+	}
+}
+
+func TestToUlimitSlice_AllCases(t *testing.T) {
+	tests := []struct {
+		name string
+		in   interface{}
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"shorthand int", map[string]interface{}{"nproc": 65535}, []string{"nproc=65535"}},
+		{"shorthand float64", map[string]interface{}{"nproc": float64(65535)}, []string{"nproc=65535"}},
+		{
+			"long form soft/hard",
+			map[string]interface{}{"nofile": map[string]interface{}{"soft": 1024, "hard": 2048}},
+			[]string{"nofile=1024:2048"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ToUlimitSlice(tt.in)
+			if !stringSliceEqual(got, tt.want) {
+				t.Errorf("ToUlimitSlice(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpandEnv_EmptyVarName(t *testing.T) {
+	// An empty variable name before the default form must NOT be treated as a
+	// valid default expression. It is equivalent to os.Getenv("") (empty string),
+	// so the default value is intentionally NOT yielded.
+	cases := []string{
+		"${:-fallback}",
+		"${-fallback}",
+	}
+	for _, in := range cases {
+		got := expandEnv(in)
+		if got == "fallback" {
+			t.Errorf("expandEnv(%q) = %q, default value must not be silently yielded for empty var name", in, got)
+		}
+		if got != "" {
+			t.Errorf("expandEnv(%q) = %q, want %q", in, got, "")
+		}
 	}
 }
 

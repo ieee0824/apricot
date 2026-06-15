@@ -172,10 +172,13 @@ func TestBuildRunArgs_ImageIsLast_BeforeCommand(t *testing.T) {
 	if imgIdx == -1 {
 		t.Fatal("image not found in args")
 	}
-	// All flags before image should start with "-" or "--"
-	for _, a := range args[:imgIdx] {
-		if a == "nginx:latest" {
-			continue
+	// Every arg before the image must be a flag (starting with "-") or a flag
+	// value (preceded by a flag); none should be a bare positional.
+	for i, a := range args[:imgIdx] {
+		if !strings.HasPrefix(a, "-") {
+			if i == 0 || !strings.HasPrefix(args[i-1], "-") {
+				t.Errorf("arg %q at index %d before image is neither a flag nor a flag value: %v", a, i, args)
+			}
 		}
 	}
 	// Command args must be after image
@@ -416,6 +419,38 @@ func TestParseMacOSMajorVersion(t *testing.T) {
 	}
 }
 
+func TestSupportsNetworksForVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"26.0", true},
+		{"25.4", false},
+		{"", false},
+		{"garbage", false},
+	}
+	for _, tt := range tests {
+		if got := supportsNetworksForVersion(tt.input); got != tt.want {
+			t.Errorf("supportsNetworksForVersion(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestValidateScaleTargets(t *testing.T) {
+	services := map[string]compose.Service{"web": {}, "db": {}}
+	scale := scaleMap{"web": 2, "worker": 3, "cache": 1}
+
+	got := validateScaleTargets(scale, services)
+	sort.Strings(got)
+	if want := []string{"cache", "worker"}; !slices.Equal(got, want) {
+		t.Errorf("validateScaleTargets() = %v, want %v", got, want)
+	}
+
+	if u := validateScaleTargets(scaleMap{"web": 1}, services); len(u) != 0 {
+		t.Errorf("expected no unknown targets, got %v", u)
+	}
+}
+
 func TestParseBindMountHostPath(t *testing.T) {
 	tests := []struct {
 		input string
@@ -527,6 +562,19 @@ func TestEnsureBindMountDirs_SymlinkEscape(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "escapes compose directory") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestEnsureBindMountDirs_MkdirAllError(t *testing.T) {
+	// A regular file where a directory is expected makes MkdirAll fail; the
+	// error must be surfaced rather than swallowed.
+	composeDir := t.TempDir()
+	blocker := filepath.Join(composeDir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("failed to create blocker file: %v", err)
+	}
+	if err := ensureBindMountDirs([]string{"./blocker/sub:/data"}, composeDir); err == nil {
+		t.Fatal("expected error when MkdirAll is blocked by a file, got nil")
 	}
 }
 
