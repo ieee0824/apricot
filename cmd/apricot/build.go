@@ -49,7 +49,12 @@ func runBuild(args []string) {
 			imageName = projectName + "_" + name
 		}
 		fmt.Printf("Building %s\n", imageName)
-		if err := runner.Build(buildImageArgs(imageName, bc)); err != nil {
+		buildArgs, err := buildImageArgs(imageName, bc)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runner.Build(buildArgs); err != nil {
 			fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
 			os.Exit(1)
 		}

@@ -7,16 +7,39 @@ import (
 	"runtime/debug"
 )
 
-var version = ""
+var (
+	version   = ""
+	buildTime = ""
+)
 
 func init() {
-	if version != "" {
-		return // set via ldflags
+	if version != "" && buildTime != "" {
+		return // both set via ldflags
 	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		version = info.Main.Version
-	} else {
-		version = "dev"
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		if version == "" {
+			version = "dev"
+		}
+		return
+	}
+
+	if version == "" {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		} else {
+			version = "dev"
+		}
+	}
+
+	if buildTime == "" {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.time" {
+				buildTime = s.Value
+				break
+			}
+		}
 	}
 }
 
@@ -40,7 +63,11 @@ func main() {
 	case "exec":
 		runExec(os.Args[2:])
 	case "version", "--version", "-v":
-		fmt.Println("apricot", version)
+		if buildTime != "" {
+			fmt.Printf("apricot %s (built %s)\n", version, buildTime)
+		} else {
+			fmt.Println("apricot", version)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:

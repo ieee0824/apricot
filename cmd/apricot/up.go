@@ -79,7 +79,7 @@ func runUp(args []string) {
 	fs.Parse(args)
 
 	projectName := resolveProjectName(*project)
-	composeDir := filepath.Dir(*file)
+	composeDir, _ := filepath.Abs(filepath.Dir(*file))
 
 	cf, err := compose.Load(*file)
 	if err != nil {
@@ -181,7 +181,12 @@ func runUp(args []string) {
 				imageName = projectName + "_" + name
 			}
 			fmt.Printf("Building %s\n", imageName)
-			if err := runner.Build(buildImageArgs(imageName, bc)); err != nil {
+			buildArgs, err := buildImageArgs(imageName, bc)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := runner.Build(buildArgs); err != nil {
 				fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
 				os.Exit(1)
 			}
@@ -202,8 +207,12 @@ func runUp(args []string) {
 			} else {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
-			_ = runner.StopQuiet(containerName)
-			_ = runner.DeleteQuiet(containerName)
+			if err := runner.StopQuiet(containerName); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
+			}
+			if err := runner.DeleteQuiet(containerName); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
+			}
 
 			if err := ensureBindMountDirs(svc.Volumes, composeDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -255,7 +264,9 @@ func runUp(args []string) {
 	fmt.Println("\nStopping...")
 	cancel()
 	for _, s := range started {
-		_ = runner.StopQuiet(s.name)
+		if err := runner.StopQuiet(s.name); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to stop %s: %v\n", s.name, err)
+		}
 	}
 	wg.Wait()
 }
@@ -404,7 +415,7 @@ func labelSlice(v interface{}) []string {
 }
 
 // buildImageArgs returns the args for `container build` (options + context).
-func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
+func buildImageArgs(imageName string, bc *compose.BuildConfig) ([]string, error) {
 	var args []string
 
 	// Resolve context early so dockerfile can be joined with it.
@@ -421,6 +432,12 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 		df := bc.Dockerfile
 		if !filepath.IsAbs(df) {
 			df = filepath.Join(ctx, df)
+			// Prevent relative dockerfile path from escaping the build context
+			// by checking if the resolved path still starts with the context prefix.
+			rel, err := filepath.Rel(filepath.Clean(ctx), filepath.Clean(df))
+			if err != nil || strings.HasPrefix(rel, "..") {
+				return nil, fmt.Errorf("dockerfile path %q escapes build context %q", bc.Dockerfile, ctx)
+			}
 		}
 		args = append(args, "-f", df)
 	}
@@ -440,11 +457,12 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 	// Context directory (must be last)
 	args = append(args, ctx)
 
-	return args
+	return args, nil
 }
 
 // ensureBindMountDirs creates host directories for bind mount volumes
 // that don't exist yet. Named volumes (no path prefix) are skipped.
+// The resulting path must stay within composeDir to prevent path traversal.
 func ensureBindMountDirs(volumes []string, composeDir string) error {
 	for _, v := range volumes {
 		hostPath := parseBindMountHostPath(v)
@@ -454,9 +472,23 @@ func ensureBindMountDirs(volumes []string, composeDir string) error {
 		if !filepath.IsAbs(hostPath) {
 			hostPath = filepath.Join(composeDir, hostPath)
 		}
-		if err := os.MkdirAll(hostPath, 0755); err != nil {
+		hostPath = filepath.Clean(hostPath)
+		if err := validatePathWithinBase(hostPath, composeDir); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(hostPath, 0700); err != nil {
 			return fmt.Errorf("failed to create bind mount directory %q: %w", hostPath, err)
 		}
+	}
+	return nil
+}
+
+// validatePathWithinBase ensures that resolved is under baseDir.
+// Returns an error when the path escapes the base directory.
+func validatePathWithinBase(resolved, baseDir string) error {
+	base := filepath.Clean(baseDir) + string(filepath.Separator)
+	if resolved != filepath.Clean(baseDir) && !strings.HasPrefix(resolved, base) {
+		return fmt.Errorf("path %q escapes compose directory %q", resolved, baseDir)
 	}
 	return nil
 }
@@ -469,6 +501,11 @@ func resolveVolumeHostPath(volume, composeDir string) string {
 		return volume
 	}
 	host := parts[0]
+	// Normalize bare "." and ".." to "./" and "../" so they are recognized as
+	// relative bind-mount paths rather than being passed through as volume names.
+	if host == "." || host == ".." {
+		host = host + "/"
+	}
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return volume // named volume, leave as-is
 	}
@@ -486,6 +523,9 @@ func parseBindMountHostPath(volume string) string {
 		return ""
 	}
 	host := parts[0]
+	if host == "." || host == ".." {
+		host = host + "/"
+	}
 	// Named volumes don't start with / . or ~
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return ""
