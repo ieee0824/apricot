@@ -99,6 +99,14 @@ func runUp(args []string) {
 		}
 	}
 
+	// Reject services that reference networks not declared at the top level,
+	// matching docker-compose (otherwise the container is started with a
+	// network that was never created and fails with an opaque runtime error).
+	if err := validateServiceNetworks(cf); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
 	// Create networks (skip external networks)
 	for name, net := range cf.Networks {
 		if net.External {
@@ -440,7 +448,7 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) ([]string, error)
 			// Prevent relative dockerfile path from escaping the build context
 			// by checking if the resolved path still starts with the context prefix.
 			rel, err := filepath.Rel(filepath.Clean(ctx), filepath.Clean(df))
-			if err != nil || strings.HasPrefix(rel, "..") {
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return nil, fmt.Errorf("dockerfile path %q escapes build context %q", bc.Dockerfile, ctx)
 			}
 		}
@@ -474,24 +482,24 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) ([]string, error)
 // while those outside it (e.g. /etc/localtime or a shared cache) are left for
 // the runtime to manage rather than being rejected.
 func ensureBindMountDirs(volumes []string, composeDir string) error {
+	baseReal := resolveExistingSymlinks(composeDir)
 	for _, v := range volumes {
 		hostPath := parseBindMountHostPath(v)
 		if hostPath == "" {
 			continue
 		}
-		if filepath.IsAbs(hostPath) {
-			resolved := filepath.Clean(hostPath)
-			if validatePathWithinBase(resolved, composeDir) != nil {
+		resolved := filepath.Clean(hostPath)
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Clean(filepath.Join(composeDir, hostPath))
+		}
+		// Resolve symlinks before validating so a symlink inside the project
+		// cannot point the real directory outside composeDir.
+		real := resolveExistingSymlinks(resolved)
+		if validatePathWithinBase(real, baseReal) != nil {
+			if filepath.IsAbs(hostPath) {
 				continue // absolute path outside the project; not ours to create
 			}
-			if err := mkdirBindMount(resolved); err != nil {
-				return err
-			}
-			continue
-		}
-		resolved := filepath.Clean(filepath.Join(composeDir, hostPath))
-		if err := validatePathWithinBase(resolved, composeDir); err != nil {
-			return err
+			return fmt.Errorf("path %q escapes compose directory %q", resolved, composeDir)
 		}
 		if err := mkdirBindMount(resolved); err != nil {
 			return err
@@ -506,6 +514,28 @@ func mkdirBindMount(path string) error {
 		return fmt.Errorf("failed to create bind mount directory %q: %w", path, err)
 	}
 	return nil
+}
+
+// resolveExistingSymlinks resolves symlinks along the deepest existing prefix of
+// path, re-appending the not-yet-created remainder. This reveals where a
+// bind-mount directory would actually live before it is created.
+func resolveExistingSymlinks(path string) string {
+	path = filepath.Clean(path)
+	rest := ""
+	for {
+		if real, err := filepath.EvalSymlinks(path); err == nil {
+			if rest == "" {
+				return real
+			}
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return filepath.Clean(filepath.Join(path, rest))
+		}
+		rest = filepath.Join(filepath.Base(path), rest)
+		path = parent
+	}
 }
 
 // validatePathWithinBase ensures that resolved is under baseDir.
@@ -534,6 +564,7 @@ func resolveVolumeHostPath(volume, composeDir string) string {
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return volume // named volume, leave as-is
 	}
+	host = expandTilde(host)
 	if !filepath.IsAbs(host) {
 		host = filepath.Join(composeDir, host)
 	}
@@ -555,7 +586,32 @@ func parseBindMountHostPath(volume string) string {
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return ""
 	}
-	return host
+	return expandTilde(host)
+}
+
+// expandTilde expands a leading ~ or ~/ to the user's home directory. Other
+// inputs (and ~user, which apricot does not resolve) are returned unchanged.
+func expandTilde(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+	return path
+}
+
+// validateServiceNetworks ensures every network referenced by a service is
+// declared in the top-level networks: section, matching docker-compose, which
+// rejects references to undefined networks.
+func validateServiceNetworks(cf *compose.ComposeFile) error {
+	for name, svc := range cf.Services {
+		for _, key := range compose.ToNetworkNames(svc.Networks) {
+			if _, ok := cf.Networks[key]; !ok {
+				return fmt.Errorf("service %q references undefined network %q", name, key)
+			}
+		}
+	}
+	return nil
 }
 
 // buildNetworkCreateArgs returns the args for `container network create` (options + name).

@@ -494,3 +494,32 @@ func indexOf(slice []string, s string) int {
 	}
 	return -1
 }
+
+func TestToStringMap_SliceForm(t *testing.T) {
+	got := toStringMap([]interface{}{
+		"FOO=bar",
+		"BAZ=qux=extra", // value may contain '='
+		"NOEQUALS",      // malformed: no '=' -> dropped
+		"=value",        // malformed: empty key -> dropped
+		123,             // non-string -> dropped
+	})
+	want := map[string]string{
+		"FOO": "bar",
+		"BAZ": "qux=extra",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("toStringMap() = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("toStringMap()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestToStringMap_MapForm(t *testing.T) {
+	got := toStringMap(map[string]interface{}{"FOO": "bar", "NUM": 42})
+	if got["FOO"] != "bar" || got["NUM"] != "42" {
+		t.Errorf("toStringMap() = %v", got)
+	}
+}

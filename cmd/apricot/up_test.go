@@ -233,6 +233,17 @@ func TestBuildImageArgs_Dockerfile_PathTraversal(t *testing.T) {
 	}
 }
 
+func TestBuildImageArgs_Dockerfile_DotDotPrefixDirAllowed(t *testing.T) {
+	// A directory whose name merely starts with ".." (e.g. "..tools") is not a
+	// parent-directory escape and must not be rejected.
+	bc := &compose.BuildConfig{Context: ".", Dockerfile: "..tools/Dockerfile"}
+	args, err := buildImageArgs("myimage", bc)
+	if err != nil {
+		t.Fatalf("dir name starting with .. should be allowed, got: %v", err)
+	}
+	assertContainsSequence(t, args, "-f", "..tools/Dockerfile")
+}
+
 func TestBuildImageArgs_Target(t *testing.T) {
 	bc := &compose.BuildConfig{Context: ".", Target: "builder"}
 	args := mustBuildImageArgs(t, "myimage", bc)
@@ -415,7 +426,6 @@ func TestParseBindMountHostPath(t *testing.T) {
 		{"./data:/data", "./data"},
 		{"./.tmp/share:/share", "./.tmp/share"},
 		{"/var/data:/data", "/var/data"},
-		{"~/data:/data", "~/data"},
 		{"./data:/data:ro", "./data"},
 		{"myvolume:/data", ""},         // named volume
 		{"postgres_data:/var/lib", ""}, // named volume
@@ -426,6 +436,31 @@ func TestParseBindMountHostPath(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("parseBindMountHostPath(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestParseBindMountHostPath_TildeExpanded(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	if got, want := parseBindMountHostPath("~/data:/data"), filepath.Join(home, "data"); got != want {
+		t.Errorf("parseBindMountHostPath(~/data:/data) = %q, want %q", got, want)
+	}
+	if got, want := parseBindMountHostPath("~:/data"), home; got != want {
+		t.Errorf("parseBindMountHostPath(~:/data) = %q, want %q", got, want)
+	}
+}
+
+func TestResolveVolumeHostPath_TildeExpanded(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	got := resolveVolumeHostPath("~/data:/data", "/project")
+	want := filepath.Join(home, "data") + ":/data"
+	if got != want {
+		t.Errorf("resolveVolumeHostPath(~/data:/data) = %q, want %q", got, want)
 	}
 }
 
@@ -475,6 +510,50 @@ func TestEnsureBindMountDirs_AbsolutePathOutsideBaseAllowed(t *testing.T) {
 	}
 	if _, err := os.Stat(outside); !os.IsNotExist(err) {
 		t.Errorf("apricot should not create absolute paths outside composeDir; %q exists", outside)
+	}
+}
+
+func TestEnsureBindMountDirs_SymlinkEscape(t *testing.T) {
+	// A symlink inside the project pointing outside it must not let a bind mount
+	// escape composeDir, even though the lexical path looks contained.
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	err := ensureBindMountDirs([]string{"./link/sub:/data"}, base)
+	if err == nil {
+		t.Fatal("expected error for symlink escaping composeDir, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes compose directory") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestValidateServiceNetworks(t *testing.T) {
+	// A service referencing an undefined network is rejected.
+	cf := &compose.ComposeFile{
+		Services: map[string]compose.Service{
+			"web": {Networks: []interface{}{"frontend"}},
+		},
+		Networks: map[string]compose.Network{},
+	}
+	if err := validateServiceNetworks(cf); err == nil {
+		t.Fatal("expected error for undefined network, got nil")
+	}
+
+	// Declaring the network makes it valid.
+	cf.Networks["frontend"] = compose.Network{}
+	if err := validateServiceNetworks(cf); err != nil {
+		t.Errorf("declared network should validate, got: %v", err)
+	}
+
+	// A service with no networks is always valid.
+	cf2 := &compose.ComposeFile{
+		Services: map[string]compose.Service{"db": {}},
+	}
+	if err := validateServiceNetworks(cf2); err != nil {
+		t.Errorf("service without networks should validate, got: %v", err)
 	}
 }
 
