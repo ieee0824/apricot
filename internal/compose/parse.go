@@ -200,15 +200,27 @@ func portMapToSpec(m map[string]interface{}) string {
 	if target == "" {
 		return ""
 	}
+	published := scalarToString(m["published"])
+	hostIP := scalarToString(m["host_ip"])
+	// A host_ip needs an explicit host port to form a valid 3-field spec
+	// (host_ip:published:target); otherwise "host_ip:target" is ambiguous and
+	// rejected by the CLI. Default the published port to the target port.
+	if hostIP != "" && published == "" {
+		published = target
+	}
 	spec := target
-	if published := scalarToString(m["published"]); published != "" {
+	if published != "" {
 		spec = published + ":" + target
 	}
-	if hostIP := scalarToString(m["host_ip"]); hostIP != "" {
+	if hostIP != "" {
 		spec = hostIP + ":" + spec
 	}
 	if proto := scalarToString(m["protocol"]); proto != "" {
-		spec += "/" + proto
+		if proto == "tcp" || proto == "udp" {
+			spec += "/" + proto
+		} else {
+			warnf("ignoring invalid port protocol %q (must be tcp or udp)", proto)
+		}
 	}
 	return spec
 }

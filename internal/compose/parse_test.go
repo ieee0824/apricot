@@ -628,6 +628,9 @@ func TestToPortList(t *testing.T) {
 		{"long published+target", []interface{}{map[string]interface{}{"target": 80, "published": 8080}}, []string{"8080:80"}},
 		{"long with protocol", []interface{}{map[string]interface{}{"target": 80, "published": 8080, "protocol": "tcp"}}, []string{"8080:80/tcp"}},
 		{"long with host_ip", []interface{}{map[string]interface{}{"target": 80, "published": 8080, "host_ip": "127.0.0.1"}}, []string{"127.0.0.1:8080:80"}},
+		{"long host_ip without published", []interface{}{map[string]interface{}{"target": 80, "host_ip": "127.0.0.1"}}, []string{"127.0.0.1:80:80"}},
+		{"long host_ip without published, with proto", []interface{}{map[string]interface{}{"target": 80, "host_ip": "127.0.0.1", "protocol": "udp"}}, []string{"127.0.0.1:80:80/udp"}},
+		{"invalid protocol omitted", []interface{}{map[string]interface{}{"target": 80, "published": 8080, "protocol": true}}, []string{"8080:80"}},
 		{"long target only", []interface{}{map[string]interface{}{"target": 80}}, []string{"80"}},
 		{"mixed short and long", []interface{}{"5432:5432", map[string]interface{}{"target": 80, "published": 8080}}, []string{"5432:5432", "8080:80"}},
 	}
@@ -652,6 +655,7 @@ func TestToVolumeList(t *testing.T) {
 		{"long bind", []interface{}{map[string]interface{}{"type": "bind", "source": "./data", "target": "/data"}}, []string{"./data:/data"}},
 		{"long read_only", []interface{}{map[string]interface{}{"source": "./cfg", "target": "/cfg", "read_only": true}}, []string{"./cfg:/cfg:ro"}},
 		{"long anonymous (target only)", []interface{}{map[string]interface{}{"target": "/cache"}}, []string{"/cache"}},
+		{"long anonymous read_only", []interface{}{map[string]interface{}{"target": "/cache", "read_only": true}}, []string{"/cache:ro"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
