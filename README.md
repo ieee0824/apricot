@@ -140,8 +140,8 @@ apricot exec -w /app web pwd    # specify working directory
 | `dns` | ✅ |
 | `dns_search` | ✅ |
 | `dns_opt` | ✅ |
-| `init` | ✅ |
-| `ulimits` | ✅ |
+| `init` | ❌ (not supported by Apple Container) |
+| `ulimits` | ❌ (not supported by Apple Container) |
 | `depends_on` | ✅ (startup order only) |
 | `container_name` | ✅ |
 | `restart` | ❌ (not supported) |
@@ -149,3 +149,4 @@ apricot exec -w /app web pwd    # specify working directory
 ## Limitations
 
 - **networks**: Non-default network configuration requires macOS 26 or newer (Apple Container runtime limitation). On older macOS versions, `networks` settings are automatically skipped with a warning.
+- **init / ulimits**: The Apple Container CLI has no `--init` or `--ulimit` option, so these settings are ignored (with a warning) rather than passed through.

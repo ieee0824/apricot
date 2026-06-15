@@ -10,6 +10,14 @@ import (
 	"os/exec"
 )
 
+// execCommand and execCommandContext are package-level indirections over the
+// os/exec constructors so tests can substitute a fake command runner without a
+// real container runtime.
+var (
+	execCommand        = exec.Command
+	execCommandContext = exec.CommandContext
+)
+
 // Container represents a container from `container list --format json`.
 //
 // The CLI emits a nested object (fields live under "configuration", and the
@@ -61,7 +69,7 @@ func Run(args []string, detach bool) error {
 	}
 	cmdArgs = append(cmdArgs, args...)
 
-	cmd := exec.Command("container", cmdArgs...)
+	cmd := execCommand("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if !detach {
@@ -72,7 +80,7 @@ func Run(args []string, detach bool) error {
 
 // Stop stops the container with the given name/id.
 func Stop(name string) error {
-	cmd := exec.Command("container", "stop", name)
+	cmd := execCommand("container", "stop", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -80,17 +88,17 @@ func Stop(name string) error {
 
 // StopQuiet stops the container without printing output (for cleanup).
 func StopQuiet(name string) error {
-	return exec.Command("container", "stop", name).Run()
+	return execCommand("container", "stop", name).Run()
 }
 
 // DeleteQuiet deletes the container without printing output (for cleanup).
 func DeleteQuiet(name string) error {
-	return exec.Command("container", "delete", name).Run()
+	return execCommand("container", "delete", name).Run()
 }
 
 // Delete deletes the container with the given name/id.
 func Delete(name string) error {
-	cmd := exec.Command("container", "delete", name)
+	cmd := execCommand("container", "delete", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -102,7 +110,7 @@ func List(all bool) ([]Container, error) {
 	if all {
 		args = append(args, "--all")
 	}
-	out, err := exec.Command("container", args...).Output()
+	out, err := execCommand("container", args...).Output()
 	if err != nil {
 		return nil, fmt.Errorf("container list failed: %w", err)
 	}
@@ -117,12 +125,13 @@ func List(all bool) ([]Container, error) {
 // LogsFollow streams logs from a container, writing each line with a prefix to w.
 // Blocks until the context is cancelled or the container exits.
 func LogsFollow(ctx context.Context, name, prefix string, w io.Writer) {
-	cmd := exec.CommandContext(ctx, "container", "logs", "-f", name)
+	cmd := execCommandContext(ctx, "container", "logs", "-f", name)
 	pr, pw := io.Pipe()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 
 	if err := cmd.Start(); err != nil {
+		fmt.Fprintf(w, "logs: failed to start for %s: %v\n", name, err)
 		return
 	}
 
@@ -132,6 +141,9 @@ func LogsFollow(ctx context.Context, name, prefix string, w io.Writer) {
 		scanner := bufio.NewScanner(pr)
 		for scanner.Scan() {
 			fmt.Fprintf(w, "%s | %s\n", prefix, scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(w, "logs: read error for %s: %v\n", name, err)
 		}
 	}()
 
@@ -148,7 +160,7 @@ func Logs(name string, follow bool) error {
 	}
 	args = append(args, name)
 
-	cmd := exec.Command("container", args...)
+	cmd := execCommand("container", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -157,7 +169,7 @@ func Logs(name string, follow bool) error {
 // Build runs `container build` with the given args.
 func Build(args []string) error {
 	cmdArgs := append([]string{"build"}, args...)
-	cmd := exec.Command("container", cmdArgs...)
+	cmd := execCommand("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -166,7 +178,7 @@ func Build(args []string) error {
 // NetworkCreate creates a network with the given args (options + name).
 func NetworkCreate(args []string) error {
 	cmdArgs := append([]string{"network", "create"}, args...)
-	cmd := exec.Command("container", cmdArgs...)
+	cmd := execCommand("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -174,7 +186,7 @@ func NetworkCreate(args []string) error {
 
 // VolumeCreate creates a volume.
 func VolumeCreate(name string) error {
-	cmd := exec.Command("container", "volume", "create", name)
+	cmd := execCommand("container", "volume", "create", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -182,7 +194,7 @@ func VolumeCreate(name string) error {
 
 // VolumeDelete deletes a volume.
 func VolumeDelete(name string) error {
-	cmd := exec.Command("container", "volume", "delete", name)
+	cmd := execCommand("container", "volume", "delete", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -191,7 +203,7 @@ func VolumeDelete(name string) error {
 // Exec runs `container exec` with the given args (options + container + command).
 func Exec(args []string) error {
 	cmdArgs := append([]string{"exec"}, args...)
-	cmd := exec.Command("container", cmdArgs...)
+	cmd := execCommand("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -200,7 +212,7 @@ func Exec(args []string) error {
 
 // NetworkDelete deletes a network.
 func NetworkDelete(name string) error {
-	cmd := exec.Command("container", "network", "delete", name)
+	cmd := execCommand("container", "network", "delete", name)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

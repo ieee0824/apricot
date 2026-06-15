@@ -8,11 +8,20 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// warnf prints a parsing warning to stderr so that silently malformed compose
+// values (which would otherwise be dropped) are surfaced to the user.
+func warnf(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, "Warning: "+format+"\n", args...)
+}
+
 // expandEnv expands environment variables supporting ${VAR:-default} and ${VAR-default} syntax.
 func expandEnv(s string) string {
 	return os.Expand(s, func(key string) string {
 		if i := strings.Index(key, ":-"); i >= 0 {
 			name, def := key[:i], key[i+2:]
+			if name == "" {
+				return os.Getenv("")
+			}
 			if v := os.Getenv(name); v != "" {
 				return v
 			}
@@ -20,6 +29,9 @@ func expandEnv(s string) string {
 		}
 		if i := strings.Index(key, "-"); i >= 0 {
 			name, def := key[:i], key[i+1:]
+			if name == "" {
+				return os.Getenv("")
+			}
 			if v, ok := os.LookupEnv(name); ok {
 				return v
 			}
@@ -60,6 +72,8 @@ func ToStringSlice(v interface{}) []string {
 		for _, item := range val {
 			if s, ok := item.(string); ok {
 				result = append(result, s)
+			} else {
+				warnf("ignoring non-string list item %v", item)
 			}
 		}
 		return result
@@ -88,6 +102,8 @@ func ToEnvSlice(v interface{}) []string {
 		for _, item := range val {
 			if s, ok := item.(string); ok {
 				result = append(result, s)
+			} else {
+				warnf("ignoring non-string environment item %v", item)
 			}
 		}
 		return result
@@ -106,6 +122,8 @@ func ToNetworkNames(v interface{}) []string {
 		for _, item := range val {
 			if s, ok := item.(string); ok {
 				result = append(result, s)
+			} else {
+				warnf("ignoring non-string network/list item %v", item)
 			}
 		}
 		return result
@@ -169,14 +187,17 @@ func toStringMap(v interface{}) map[string]string {
 	case []interface{}:
 		result := make(map[string]string)
 		for _, item := range val {
-			if s, ok := item.(string); ok {
-				for i, c := range s {
-					if c == '=' {
-						result[s[:i]] = s[i+1:]
-						break
-					}
-				}
+			s, ok := item.(string)
+			if !ok {
+				warnf("ignoring non-string entry %v", item)
+				continue
 			}
+			i := strings.IndexByte(s, '=')
+			if i <= 0 { // no '=' separator, or empty key ("=value")
+				warnf("ignoring malformed entry %q (expected KEY=VALUE)", s)
+				continue
+			}
+			result[s[:i]] = s[i+1:]
 		}
 		return result
 	}
@@ -198,6 +219,8 @@ func ToUlimitSlice(v interface{}) []string {
 		switch u := val.(type) {
 		case int:
 			result = append(result, fmt.Sprintf("%s=%d", name, u))
+		case float64:
+			result = append(result, fmt.Sprintf("%s=%d", name, int(u)))
 		case map[string]interface{}:
 			soft, hasSoft := toInt(u["soft"])
 			hard, hasHard := toInt(u["hard"])

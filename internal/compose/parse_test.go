@@ -3,6 +3,7 @@ package compose
 import (
 	"os"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -474,6 +475,74 @@ func TestToInt_Invalid(t *testing.T) {
 	}
 }
 
+func TestLoad_InvalidYAML(t *testing.T) {
+	// Malformed YAML: an unclosed bracket in the image value.
+	yaml := `
+services:
+  web:
+    image: [nginx:latest
+`
+	f, err := os.CreateTemp("", "compose-invalid-*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(yaml)
+	f.Close()
+
+	_, err = Load(f.Name())
+	if err == nil {
+		t.Fatal("expected error for invalid YAML, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to parse") {
+		t.Errorf("expected error containing %q, got %q", "failed to parse", err.Error())
+	}
+}
+
+func TestToUlimitSlice_AllCases(t *testing.T) {
+	tests := []struct {
+		name string
+		in   interface{}
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"shorthand int", map[string]interface{}{"nproc": 65535}, []string{"nproc=65535"}},
+		{"shorthand float64", map[string]interface{}{"nproc": float64(65535)}, []string{"nproc=65535"}},
+		{
+			"long form soft/hard",
+			map[string]interface{}{"nofile": map[string]interface{}{"soft": 1024, "hard": 2048}},
+			[]string{"nofile=1024:2048"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ToUlimitSlice(tt.in)
+			if !stringSliceEqual(got, tt.want) {
+				t.Errorf("ToUlimitSlice(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExpandEnv_EmptyVarName(t *testing.T) {
+	// An empty variable name before the default form must NOT be treated as a
+	// valid default expression. It is equivalent to os.Getenv("") (empty string),
+	// so the default value is intentionally NOT yielded.
+	cases := []string{
+		"${:-fallback}",
+		"${-fallback}",
+	}
+	for _, in := range cases {
+		got := expandEnv(in)
+		if got == "fallback" {
+			t.Errorf("expandEnv(%q) = %q, default value must not be silently yielded for empty var name", in, got)
+		}
+		if got != "" {
+			t.Errorf("expandEnv(%q) = %q, want %q", in, got, "")
+		}
+	}
+}
+
 func stringSliceEqual(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -493,4 +562,56 @@ func indexOf(slice []string, s string) int {
 		}
 	}
 	return -1
+}
+
+func TestToStringMap_SliceForm(t *testing.T) {
+	got := toStringMap([]interface{}{
+		"FOO=bar",
+		"BAZ=qux=extra", // value may contain '='
+		"NOEQUALS",      // malformed: no '=' -> dropped
+		"=value",        // malformed: empty key -> dropped
+		123,             // non-string -> dropped
+	})
+	want := map[string]string{
+		"FOO": "bar",
+		"BAZ": "qux=extra",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("toStringMap() = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("toStringMap()[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestToStringMap_MapForm(t *testing.T) {
+	got := toStringMap(map[string]interface{}{"FOO": "bar", "NUM": 42})
+	if got["FOO"] != "bar" || got["NUM"] != "42" {
+		t.Errorf("toStringMap() = %v", got)
+	}
+}
+
+// The slice converters must drop (and warn about) non-string items rather than
+// panic or include zero values. These exercise the warn branches.
+func TestToStringSlice_DropsNonString(t *testing.T) {
+	got := ToStringSlice([]interface{}{"a", 1, "b", nil})
+	if !stringSliceEqual(got, []string{"a", "b"}) {
+		t.Errorf("ToStringSlice() = %v, want [a b]", got)
+	}
+}
+
+func TestToEnvSlice_DropsNonString(t *testing.T) {
+	got := ToEnvSlice([]interface{}{"FOO=bar", 99})
+	if !stringSliceEqual(got, []string{"FOO=bar"}) {
+		t.Errorf("ToEnvSlice() = %v, want [FOO=bar]", got)
+	}
+}
+
+func TestToNetworkNames_DropsNonString(t *testing.T) {
+	got := ToNetworkNames([]interface{}{"frontend", 7})
+	if !stringSliceEqual(got, []string{"frontend"}) {
+		t.Errorf("ToNetworkNames() = %v, want [frontend]", got)
+	}
 }

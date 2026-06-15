@@ -7,17 +7,47 @@ import (
 	"runtime/debug"
 )
 
-var version = ""
+var (
+	version   = ""
+	buildTime = ""
+)
 
 func init() {
-	if version != "" {
-		return // set via ldflags
+	if version != "" && buildTime != "" {
+		return // both set via ldflags
 	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		version = info.Main.Version
-	} else {
-		version = "dev"
+	info, ok := debug.ReadBuildInfo()
+	version, buildTime = resolveVersionInfo(version, buildTime, info, ok)
+}
+
+// resolveVersionInfo computes the effective version and build time from any
+// ldflags-provided values (ldVersion/ldBuildTime) and the embedded build info.
+// ok reports whether build info was available. Missing pieces fall back to
+// "dev" for the version and the vcs.time setting for the build time.
+func resolveVersionInfo(ldVersion, ldBuildTime string, info *debug.BuildInfo, ok bool) (version, buildTime string) {
+	version, buildTime = ldVersion, ldBuildTime
+	if !ok {
+		if version == "" {
+			version = "dev"
+		}
+		return version, buildTime
 	}
+	if version == "" {
+		if info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		} else {
+			version = "dev"
+		}
+	}
+	if buildTime == "" {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.time" {
+				buildTime = s.Value
+				break
+			}
+		}
+	}
+	return version, buildTime
 }
 
 func main() {
@@ -40,7 +70,11 @@ func main() {
 	case "exec":
 		runExec(os.Args[2:])
 	case "version", "--version", "-v":
-		fmt.Println("apricot", version)
+		if buildTime != "" {
+			fmt.Printf("apricot %s (built %s)\n", version, buildTime)
+		} else {
+			fmt.Println("apricot", version)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:

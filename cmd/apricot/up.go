@@ -20,7 +20,13 @@ import (
 // supportsNetworks reports whether the current macOS version supports
 // non-default network configuration (requires macOS 26+).
 func supportsNetworks() bool {
-	v := macOSProductVersion()
+	return supportsNetworksForVersion(macOSProductVersion())
+}
+
+// supportsNetworksForVersion reports whether the given macOS product version
+// string supports non-default network configuration (requires macOS 26+).
+// Empty or unparseable versions are treated as unsupported.
+func supportsNetworksForVersion(v string) bool {
 	if v == "" {
 		return false
 	}
@@ -69,6 +75,18 @@ func (s scaleMap) Set(v string) error {
 	return nil
 }
 
+// validateScaleTargets returns the names present in scale that do not
+// correspond to a defined service.
+func validateScaleTargets(scale scaleMap, services map[string]compose.Service) []string {
+	var unknown []string
+	for name := range scale {
+		if _, ok := services[name]; !ok {
+			unknown = append(unknown, name)
+		}
+	}
+	return unknown
+}
+
 func runUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	detach := fs.Bool("d", false, "Run containers in background")
@@ -79,12 +97,17 @@ func runUp(args []string) {
 	fs.Parse(args)
 
 	projectName := resolveProjectName(*project)
-	composeDir := filepath.Dir(*file)
+	composeDir, _ := filepath.Abs(filepath.Dir(*file))
 
 	cf, err := compose.Load(*file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Warn about --scale targets that don't match any defined service.
+	for _, name := range validateScaleTargets(scale, cf.Services) {
+		fmt.Fprintf(os.Stderr, "Warning: --scale references unknown service %q; ignoring\n", name)
 	}
 
 	// Skip networks on macOS < 26 (Apple Container limitation)
@@ -97,6 +120,14 @@ func runUp(args []string) {
 			svc.Networks = nil
 			cf.Services[name] = svc
 		}
+	}
+
+	// Reject services that reference networks not declared at the top level,
+	// matching docker-compose (otherwise the container is started with a
+	// network that was never created and fails with an opaque runtime error).
+	if err := validateServiceNetworks(cf); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Create networks (skip external networks)
@@ -170,6 +201,15 @@ func runUp(args []string) {
 	for _, name := range order {
 		svc := cf.Services[name]
 
+		// apple container does not support these compose options; warn once per
+		// service instead of emitting flags the CLI would reject at runtime.
+		if svc.Init {
+			fmt.Fprintf(os.Stderr, "Warning: service %q sets 'init', which apple container does not support; ignoring\n", name)
+		}
+		if svc.Ulimits != nil {
+			fmt.Fprintf(os.Stderr, "Warning: service %q sets 'ulimits', which apple container does not support; ignoring\n", name)
+		}
+
 		// Build image if build: is defined
 		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
 			// Resolve build context relative to the compose file's directory
@@ -181,7 +221,12 @@ func runUp(args []string) {
 				imageName = projectName + "_" + name
 			}
 			fmt.Printf("Building %s\n", imageName)
-			if err := runner.Build(buildImageArgs(imageName, bc)); err != nil {
+			buildArgs, err := buildImageArgs(imageName, bc)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := runner.Build(buildArgs); err != nil {
 				fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
 				os.Exit(1)
 			}
@@ -202,8 +247,12 @@ func runUp(args []string) {
 			} else {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
-			_ = runner.StopQuiet(containerName)
-			_ = runner.DeleteQuiet(containerName)
+			if err := runner.StopQuiet(containerName); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
+			}
+			if err := runner.DeleteQuiet(containerName); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
+			}
 
 			if err := ensureBindMountDirs(svc.Volumes, composeDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -255,7 +304,9 @@ func runUp(args []string) {
 	fmt.Println("\nStopping...")
 	cancel()
 	for _, s := range started {
-		_ = runner.StopQuiet(s.name)
+		if err := runner.StopQuiet(s.name); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to stop %s: %v\n", s.name, err)
+		}
 	}
 	wg.Wait()
 }
@@ -363,17 +414,9 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "--dns-option", d)
 	}
 
-	// Init
-	if svc.Init {
-		args = append(args, "--init")
-	}
-
-	// Ulimits
-	for _, u := range compose.ToUlimitSlice(svc.Ulimits) {
-		args = append(args, "--ulimit", u)
-	}
-
-	// Entrypoint
+	// Entrypoint: apple container's --entrypoint takes a single command, so for
+	// exec-form entrypoints (["sh", "-c", ...]) only the first element is the
+	// entrypoint; the rest are passed as container arguments below.
 	entrypointParts := compose.ToStringSlice(svc.Entrypoint)
 	if len(entrypointParts) > 0 {
 		args = append(args, "--entrypoint", entrypointParts[0])
@@ -382,7 +425,11 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	// Image
 	args = append(args, svc.Image)
 
-	// Command (additional arguments after image)
+	// Command: remaining entrypoint args (exec form) come before the service
+	// command, mirroring how an entrypoint array and command compose together.
+	if len(entrypointParts) > 1 {
+		args = append(args, entrypointParts[1:]...)
+	}
 	args = append(args, compose.ToStringSlice(svc.Command)...)
 
 	return args
@@ -404,7 +451,7 @@ func labelSlice(v interface{}) []string {
 }
 
 // buildImageArgs returns the args for `container build` (options + context).
-func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
+func buildImageArgs(imageName string, bc *compose.BuildConfig) ([]string, error) {
 	var args []string
 
 	// Resolve context early so dockerfile can be joined with it.
@@ -421,6 +468,12 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 		df := bc.Dockerfile
 		if !filepath.IsAbs(df) {
 			df = filepath.Join(ctx, df)
+			// Prevent relative dockerfile path from escaping the build context
+			// by checking if the resolved path still starts with the context prefix.
+			rel, err := filepath.Rel(filepath.Clean(ctx), filepath.Clean(df))
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return nil, fmt.Errorf("dockerfile path %q escapes build context %q", bc.Dockerfile, ctx)
+			}
 		}
 		args = append(args, "-f", df)
 	}
@@ -440,23 +493,80 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) []string {
 	// Context directory (must be last)
 	args = append(args, ctx)
 
-	return args
+	return args, nil
 }
 
 // ensureBindMountDirs creates host directories for bind mount volumes
 // that don't exist yet. Named volumes (no path prefix) are skipped.
+//
+// Relative paths are resolved against composeDir and must stay within it, to
+// prevent a compose file from escaping the project directory via "../". Absolute
+// paths are the user's explicit choice: those inside composeDir are created,
+// while those outside it (e.g. /etc/localtime or a shared cache) are left for
+// the runtime to manage rather than being rejected.
 func ensureBindMountDirs(volumes []string, composeDir string) error {
+	baseReal := resolveExistingSymlinks(composeDir)
 	for _, v := range volumes {
 		hostPath := parseBindMountHostPath(v)
 		if hostPath == "" {
 			continue
 		}
-		if !filepath.IsAbs(hostPath) {
-			hostPath = filepath.Join(composeDir, hostPath)
+		resolved := filepath.Clean(hostPath)
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Clean(filepath.Join(composeDir, hostPath))
 		}
-		if err := os.MkdirAll(hostPath, 0755); err != nil {
-			return fmt.Errorf("failed to create bind mount directory %q: %w", hostPath, err)
+		// Resolve symlinks before validating so a symlink inside the project
+		// cannot point the real directory outside composeDir.
+		real := resolveExistingSymlinks(resolved)
+		if validatePathWithinBase(real, baseReal) != nil {
+			if filepath.IsAbs(hostPath) {
+				continue // absolute path outside the project; not ours to create
+			}
+			return fmt.Errorf("path %q escapes compose directory %q", resolved, composeDir)
 		}
+		if err := mkdirBindMount(resolved); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mkdirBindMount creates a bind-mount host directory with restrictive perms.
+func mkdirBindMount(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return fmt.Errorf("failed to create bind mount directory %q: %w", path, err)
+	}
+	return nil
+}
+
+// resolveExistingSymlinks resolves symlinks along the deepest existing prefix of
+// path, re-appending the not-yet-created remainder. This reveals where a
+// bind-mount directory would actually live before it is created.
+func resolveExistingSymlinks(path string) string {
+	path = filepath.Clean(path)
+	rest := ""
+	for {
+		if real, err := filepath.EvalSymlinks(path); err == nil {
+			if rest == "" {
+				return real
+			}
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return filepath.Clean(filepath.Join(path, rest))
+		}
+		rest = filepath.Join(filepath.Base(path), rest)
+		path = parent
+	}
+}
+
+// validatePathWithinBase ensures that resolved is under baseDir.
+// Returns an error when the path escapes the base directory.
+func validatePathWithinBase(resolved, baseDir string) error {
+	base := filepath.Clean(baseDir) + string(filepath.Separator)
+	if resolved != filepath.Clean(baseDir) && !strings.HasPrefix(resolved, base) {
+		return fmt.Errorf("path %q escapes compose directory %q", resolved, baseDir)
 	}
 	return nil
 }
@@ -468,10 +578,13 @@ func resolveVolumeHostPath(volume, composeDir string) string {
 	if len(parts) < 2 {
 		return volume
 	}
-	host := parts[0]
+	// Normalize bare "." and ".." so they are recognized as relative bind-mount
+	// paths rather than being passed through as volume names.
+	host := normalizeBareDot(parts[0])
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return volume // named volume, leave as-is
 	}
+	host = expandTilde(host)
 	if !filepath.IsAbs(host) {
 		host = filepath.Join(composeDir, host)
 	}
@@ -485,12 +598,47 @@ func parseBindMountHostPath(volume string) string {
 	if len(parts) < 2 {
 		return ""
 	}
-	host := parts[0]
+	host := normalizeBareDot(parts[0])
 	// Named volumes don't start with / . or ~
 	if !strings.HasPrefix(host, "/") && !strings.HasPrefix(host, ".") && !strings.HasPrefix(host, "~") {
 		return ""
 	}
+	return expandTilde(host)
+}
+
+// normalizeBareDot rewrites a host path of exactly "." or ".." into host + "/"
+// so it is unambiguously treated as a relative path. Other values are returned
+// unchanged.
+func normalizeBareDot(host string) string {
+	if host == "." || host == ".." {
+		return host + "/"
+	}
 	return host
+}
+
+// expandTilde expands a leading ~ or ~/ to the user's home directory. Other
+// inputs (and ~user, which apricot does not resolve) are returned unchanged.
+func expandTilde(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+	return path
+}
+
+// validateServiceNetworks ensures every network referenced by a service is
+// declared in the top-level networks: section, matching docker-compose, which
+// rejects references to undefined networks.
+func validateServiceNetworks(cf *compose.ComposeFile) error {
+	for name, svc := range cf.Services {
+		for _, key := range compose.ToNetworkNames(svc.Networks) {
+			if _, ok := cf.Networks[key]; !ok {
+				return fmt.Errorf("service %q references undefined network %q", name, key)
+			}
+		}
+	}
+	return nil
 }
 
 // buildNetworkCreateArgs returns the args for `container network create` (options + name).

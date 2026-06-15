@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -171,10 +172,13 @@ func TestBuildRunArgs_ImageIsLast_BeforeCommand(t *testing.T) {
 	if imgIdx == -1 {
 		t.Fatal("image not found in args")
 	}
-	// All flags before image should start with "-" or "--"
-	for _, a := range args[:imgIdx] {
-		if a == "nginx:latest" {
-			continue
+	// Every arg before the image must be a flag (starting with "-") or a flag
+	// value (preceded by a flag); none should be a bare positional.
+	for i, a := range args[:imgIdx] {
+		if !strings.HasPrefix(a, "-") {
+			if i == 0 || !strings.HasPrefix(args[i-1], "-") {
+				t.Errorf("arg %q at index %d before image is neither a flag nor a flag value: %v", a, i, args)
+			}
 		}
 	}
 	// Command args must be after image
@@ -185,7 +189,7 @@ func TestBuildRunArgs_ImageIsLast_BeforeCommand(t *testing.T) {
 
 func TestBuildImageArgs_Simple(t *testing.T) {
 	bc := &compose.BuildConfig{Context: "./app"}
-	args := buildImageArgs("myimage:latest", bc)
+	args := mustBuildImageArgs(t, "myimage:latest", bc)
 	assertContainsSequence(t, args, "-t", "myimage:latest")
 	if args[len(args)-1] != "./app" {
 		t.Errorf("context must be last arg, got %v", args)
@@ -194,7 +198,7 @@ func TestBuildImageArgs_Simple(t *testing.T) {
 
 func TestBuildImageArgs_DefaultContext(t *testing.T) {
 	bc := &compose.BuildConfig{}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	if args[len(args)-1] != "." {
 		t.Errorf("default context should be '.', got %v", args)
 	}
@@ -202,13 +206,13 @@ func TestBuildImageArgs_DefaultContext(t *testing.T) {
 
 func TestBuildImageArgs_Dockerfile(t *testing.T) {
 	bc := &compose.BuildConfig{Context: ".", Dockerfile: "Dockerfile.dev"}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	assertContainsSequence(t, args, "-f", "Dockerfile.dev")
 }
 
 func TestBuildImageArgs_Dockerfile_RelativeToContext(t *testing.T) {
 	bc := &compose.BuildConfig{Context: "./container/mysql", Dockerfile: "Dockerfile"}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	assertContainsSequence(t, args, "-f", "container/mysql/Dockerfile")
 	if args[len(args)-1] != "./container/mysql" {
 		t.Errorf("context must be last arg, got %v", args)
@@ -217,25 +221,47 @@ func TestBuildImageArgs_Dockerfile_RelativeToContext(t *testing.T) {
 
 func TestBuildImageArgs_Dockerfile_AbsolutePathNotJoined(t *testing.T) {
 	bc := &compose.BuildConfig{Context: "./app", Dockerfile: "/opt/dockerfiles/Dockerfile.prod"}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	assertContainsSequence(t, args, "-f", "/opt/dockerfiles/Dockerfile.prod")
+}
+
+func TestBuildImageArgs_Dockerfile_PathTraversal(t *testing.T) {
+	bc := &compose.BuildConfig{Context: "./app", Dockerfile: "../../etc/Dockerfile.evil"}
+	_, err := buildImageArgs("myimage", bc)
+	if err == nil {
+		t.Fatal("expected error for path traversal dockerfile, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes build context") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestBuildImageArgs_Dockerfile_DotDotPrefixDirAllowed(t *testing.T) {
+	// A directory whose name merely starts with ".." (e.g. "..tools") is not a
+	// parent-directory escape and must not be rejected.
+	bc := &compose.BuildConfig{Context: ".", Dockerfile: "..tools/Dockerfile"}
+	args, err := buildImageArgs("myimage", bc)
+	if err != nil {
+		t.Fatalf("dir name starting with .. should be allowed, got: %v", err)
+	}
+	assertContainsSequence(t, args, "-f", "..tools/Dockerfile")
 }
 
 func TestBuildImageArgs_Target(t *testing.T) {
 	bc := &compose.BuildConfig{Context: ".", Target: "builder"}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	assertContainsSequence(t, args, "--target", "builder")
 }
 
 func TestBuildImageArgs_NoCache(t *testing.T) {
 	bc := &compose.BuildConfig{Context: ".", NoCache: true}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	assertContains(t, args, "--no-cache")
 }
 
 func TestBuildImageArgs_BuildArgs(t *testing.T) {
 	bc := &compose.BuildConfig{Context: ".", Args: map[string]string{"ENV": "prod"}}
-	args := buildImageArgs("myimage", bc)
+	args := mustBuildImageArgs(t, "myimage", bc)
 	assertContainsSequence(t, args, "--build-arg", "ENV=prod")
 }
 
@@ -273,11 +299,12 @@ func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
 	}
 }
 
-func TestBuildRunArgs_Init(t *testing.T) {
+func TestBuildRunArgs_Init_NotEmitted(t *testing.T) {
+	// apple container has no --init flag, so it must not be generated.
 	svc := compose.Service{Image: "myapp", Init: true}
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
-	assertContains(t, args, "--init")
+	assertNotContains(t, args, "--init")
 }
 
 func TestBuildRunArgs_DNSSearch(t *testing.T) {
@@ -294,7 +321,8 @@ func TestBuildRunArgs_DNSOpt(t *testing.T) {
 	assertContainsSequence(t, args, "--dns-option", "ndots:2")
 }
 
-func TestBuildRunArgs_Ulimits(t *testing.T) {
+func TestBuildRunArgs_Ulimits_NotEmitted(t *testing.T) {
+	// apple container has no --ulimit flag, so it must not be generated.
 	svc := compose.Service{
 		Image: "myapp",
 		Ulimits: map[string]interface{}{
@@ -303,7 +331,28 @@ func TestBuildRunArgs_Ulimits(t *testing.T) {
 	}
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
-	assertContainsSequence(t, args, "--ulimit", "nofile=1024:2048")
+	assertNotContains(t, args, "--ulimit")
+}
+
+func TestBuildRunArgs_EntrypointExecForm(t *testing.T) {
+	// Exec-form entrypoint: only the first element is the --entrypoint; the rest
+	// must be preserved as container args after the image.
+	svc := compose.Service{
+		Image:      "myapp",
+		Entrypoint: []interface{}{"sh", "-c", "echo hi"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+
+	assertContainsSequence(t, args, "--entrypoint", "sh")
+	imgIdx := slices.Index(args, "myapp")
+	if imgIdx == -1 {
+		t.Fatal("image not found in args")
+	}
+	remaining := args[imgIdx+1:]
+	if !slices.Equal(remaining, []string{"-c", "echo hi"}) {
+		t.Errorf("entrypoint args not preserved after image: got %v", remaining)
+	}
 }
 
 func TestScaleMap_Set_Valid(t *testing.T) {
@@ -370,15 +419,48 @@ func TestParseMacOSMajorVersion(t *testing.T) {
 	}
 }
 
+func TestSupportsNetworksForVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"26.0", true},
+		{"25.4", false},
+		{"", false},
+		{"garbage", false},
+	}
+	for _, tt := range tests {
+		if got := supportsNetworksForVersion(tt.input); got != tt.want {
+			t.Errorf("supportsNetworksForVersion(%q) = %v, want %v", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestValidateScaleTargets(t *testing.T) {
+	services := map[string]compose.Service{"web": {}, "db": {}}
+	scale := scaleMap{"web": 2, "worker": 3, "cache": 1}
+
+	got := validateScaleTargets(scale, services)
+	sort.Strings(got)
+	if want := []string{"cache", "worker"}; !slices.Equal(got, want) {
+		t.Errorf("validateScaleTargets() = %v, want %v", got, want)
+	}
+
+	if u := validateScaleTargets(scaleMap{"web": 1}, services); len(u) != 0 {
+		t.Errorf("expected no unknown targets, got %v", u)
+	}
+}
+
 func TestParseBindMountHostPath(t *testing.T) {
 	tests := []struct {
 		input string
 		want  string
 	}{
+		{".:/app", "./"},
+		{"..:/app", "../"},
 		{"./data:/data", "./data"},
 		{"./.tmp/share:/share", "./.tmp/share"},
 		{"/var/data:/data", "/var/data"},
-		{"~/data:/data", "~/data"},
 		{"./data:/data:ro", "./data"},
 		{"myvolume:/data", ""},         // named volume
 		{"postgres_data:/var/lib", ""}, // named volume
@@ -392,13 +474,38 @@ func TestParseBindMountHostPath(t *testing.T) {
 	}
 }
 
+func TestParseBindMountHostPath_TildeExpanded(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	if got, want := parseBindMountHostPath("~/data:/data"), filepath.Join(home, "data"); got != want {
+		t.Errorf("parseBindMountHostPath(~/data:/data) = %q, want %q", got, want)
+	}
+	if got, want := parseBindMountHostPath("~:/data"), home; got != want {
+		t.Errorf("parseBindMountHostPath(~:/data) = %q, want %q", got, want)
+	}
+}
+
+func TestResolveVolumeHostPath_TildeExpanded(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	got := resolveVolumeHostPath("~/data:/data", "/project")
+	want := filepath.Join(home, "data") + ":/data"
+	if got != want {
+		t.Errorf("resolveVolumeHostPath(~/data:/data) = %q, want %q", got, want)
+	}
+}
+
 func TestEnsureBindMountDirs(t *testing.T) {
 	dir := t.TempDir()
 	volumes := []string{
 		dir + "/sub/dir:/container/path",
 		"namedvol:/data",
 	}
-	if err := ensureBindMountDirs(volumes, ""); err != nil {
+	if err := ensureBindMountDirs(volumes, dir); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	info, err := os.Stat(dir + "/sub/dir")
@@ -407,6 +514,115 @@ func TestEnsureBindMountDirs(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Error("expected directory")
+	}
+}
+
+func TestEnsureBindMountDirs_PathTraversal(t *testing.T) {
+	dir := t.TempDir()
+	volumes := []string{
+		"../../../tmp/evil:/container/path",
+	}
+	err := ensureBindMountDirs(volumes, dir)
+	if err == nil {
+		t.Fatal("expected error for path traversal, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes compose directory") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestEnsureBindMountDirs_AbsolutePathOutsideBaseAllowed(t *testing.T) {
+	// Absolute host paths outside composeDir (e.g. /etc/localtime, a shared
+	// cache) are legitimate and must not be rejected. apricot leaves them for
+	// the runtime to manage, so no directory is created and no error is returned.
+	base := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "shared-cache")
+	volumes := []string{
+		outside + ":/data",
+	}
+	if err := ensureBindMountDirs(volumes, base); err != nil {
+		t.Fatalf("absolute path outside composeDir should be allowed, got: %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Errorf("apricot should not create absolute paths outside composeDir; %q exists", outside)
+	}
+}
+
+func TestEnsureBindMountDirs_SymlinkEscape(t *testing.T) {
+	// A symlink inside the project pointing outside it must not let a bind mount
+	// escape composeDir, even though the lexical path looks contained.
+	base := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(base, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	err := ensureBindMountDirs([]string{"./link/sub:/data"}, base)
+	if err == nil {
+		t.Fatal("expected error for symlink escaping composeDir, got nil")
+	}
+	if !strings.Contains(err.Error(), "escapes compose directory") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestEnsureBindMountDirs_MkdirAllError(t *testing.T) {
+	// A regular file where a directory is expected makes MkdirAll fail; the
+	// error must be surfaced rather than swallowed.
+	composeDir := t.TempDir()
+	blocker := filepath.Join(composeDir, "blocker")
+	if err := os.WriteFile(blocker, []byte("x"), 0600); err != nil {
+		t.Fatalf("failed to create blocker file: %v", err)
+	}
+	if err := ensureBindMountDirs([]string{"./blocker/sub:/data"}, composeDir); err == nil {
+		t.Fatal("expected error when MkdirAll is blocked by a file, got nil")
+	}
+}
+
+func TestValidateServiceNetworks(t *testing.T) {
+	// A service referencing an undefined network is rejected.
+	cf := &compose.ComposeFile{
+		Services: map[string]compose.Service{
+			"web": {Networks: []interface{}{"frontend"}},
+		},
+		Networks: map[string]compose.Network{},
+	}
+	if err := validateServiceNetworks(cf); err == nil {
+		t.Fatal("expected error for undefined network, got nil")
+	}
+
+	// Declaring the network makes it valid.
+	cf.Networks["frontend"] = compose.Network{}
+	if err := validateServiceNetworks(cf); err != nil {
+		t.Errorf("declared network should validate, got: %v", err)
+	}
+
+	// A service with no networks is always valid.
+	cf2 := &compose.ComposeFile{
+		Services: map[string]compose.Service{"db": {}},
+	}
+	if err := validateServiceNetworks(cf2); err != nil {
+		t.Errorf("service without networks should validate, got: %v", err)
+	}
+}
+
+func TestValidatePathWithinBase(t *testing.T) {
+	tests := []struct {
+		resolved string
+		base     string
+		wantErr  bool
+	}{
+		{"/project/data", "/project", false},
+		{"/project", "/project", false},
+		{"/project/sub/deep", "/project", false},
+		{"/other/place", "/project", true},
+		{"/project/../etc", "/project", true},
+		{"/tmp/evil", "/project", true},
+	}
+	for _, tt := range tests {
+		err := validatePathWithinBase(filepath.Clean(tt.resolved), tt.base)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("validatePathWithinBase(%q, %q) error=%v, wantErr=%v", tt.resolved, tt.base, err, tt.wantErr)
+		}
 	}
 }
 
@@ -421,6 +637,22 @@ func TestResolveVolumeHostPath_Absolute(t *testing.T) {
 	got := resolveVolumeHostPath("/abs/data:/data", "/project")
 	if got != "/abs/data:/data" {
 		t.Errorf("got %q, want %q", got, "/abs/data:/data")
+	}
+}
+
+func TestResolveVolumeHostPath_BareCurrentDir(t *testing.T) {
+	got := resolveVolumeHostPath(".:/app", "/project")
+	if got != "/project:/app" {
+		t.Errorf("got %q, want %q", got, "/project:/app")
+	}
+}
+
+func TestResolveVolumeHostPath_BareParentDir(t *testing.T) {
+	got := resolveVolumeHostPath("..:/app", "/project/sub")
+	want := filepath.Join("/project/sub", "../") + ":/app"
+	// filepath.Join normalizes "../" to parent
+	if got != "/project:/app" {
+		t.Errorf("got %q, want %q (or %q)", got, "/project:/app", want)
 	}
 }
 
@@ -495,6 +727,26 @@ func TestBuildRunArgs_RelativeVolume(t *testing.T) {
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "/project", svc, cf)
 	assertContainsSequence(t, args, "-v", "/project/data:/data")
+}
+
+func TestBuildRunArgs_BareCurrentDirVolume(t *testing.T) {
+	svc := compose.Service{
+		Image:   "myapp",
+		Volumes: []string{".:/app"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "/project", svc, cf)
+	assertContainsSequence(t, args, "-v", "/project:/app")
+}
+
+func TestBuildRunArgs_DotSlashVolume(t *testing.T) {
+	svc := compose.Service{
+		Image:   "myapp",
+		Volumes: []string{"./:/app"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "/project", svc, cf)
+	assertContainsSequence(t, args, "-v", "/project:/app")
 }
 
 func TestBuildRunArgs_CPUs_Float(t *testing.T) {
@@ -573,10 +825,26 @@ func TestLabelSlice_Map(t *testing.T) {
 
 // helpers
 
+func mustBuildImageArgs(t *testing.T, imageName string, bc *compose.BuildConfig) []string {
+	t.Helper()
+	args, err := buildImageArgs(imageName, bc)
+	if err != nil {
+		t.Fatalf("buildImageArgs() unexpected error: %v", err)
+	}
+	return args
+}
+
 func assertContains(t *testing.T, args []string, want string) {
 	t.Helper()
 	if !slices.Contains(args, want) {
 		t.Errorf("expected %q in args %v", want, args)
+	}
+}
+
+func assertNotContains(t *testing.T, args []string, notWant string) {
+	t.Helper()
+	if slices.Contains(args, notWant) {
+		t.Errorf("did not expect %q in args %v", notWant, args)
 	}
 }
 
