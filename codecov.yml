@@ -1,0 +1,18 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        # Allow tiny fluctuations without failing the project status.
+        threshold: 1%
+    patch:
+      default:
+        # New code should be reasonably covered. Thin CLI entry points
+        # (main/run* — os.Exit + real exec) are exercised via manual/e2e use,
+        # so a realistic bar is set rather than requiring near-100% on the diff.
+        target: 70%
+        threshold: 5%
+
+# examples/ is demo code, not part of the shipped CLI.
+ignore:
+  - "examples"
