@@ -592,3 +592,26 @@ func TestToStringMap_MapForm(t *testing.T) {
 		t.Errorf("toStringMap() = %v", got)
 	}
 }
+
+// The slice converters must drop (and warn about) non-string items rather than
+// panic or include zero values. These exercise the warn branches.
+func TestToStringSlice_DropsNonString(t *testing.T) {
+	got := ToStringSlice([]interface{}{"a", 1, "b", nil})
+	if !stringSliceEqual(got, []string{"a", "b"}) {
+		t.Errorf("ToStringSlice() = %v, want [a b]", got)
+	}
+}
+
+func TestToEnvSlice_DropsNonString(t *testing.T) {
+	got := ToEnvSlice([]interface{}{"FOO=bar", 99})
+	if !stringSliceEqual(got, []string{"FOO=bar"}) {
+		t.Errorf("ToEnvSlice() = %v, want [FOO=bar]", got)
+	}
+}
+
+func TestToNetworkNames_DropsNonString(t *testing.T) {
+	got := ToNetworkNames([]interface{}{"frontend", 7})
+	if !stringSliceEqual(got, []string{"frontend"}) {
+		t.Errorf("ToNetworkNames() = %v, want [frontend]", got)
+	}
+}

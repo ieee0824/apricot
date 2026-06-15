@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -315,6 +317,85 @@ func TestCommandArgv(t *testing.T) {
 		want := []string{"container", "run", "nginx"}
 		if !reflect.DeepEqual(*recorded, want) {
 			t.Errorf("argv = %v, want %v", *recorded, want)
+		}
+	})
+
+	cases := []struct {
+		name string
+		call func() error
+		want []string
+	}{
+		{"StopQuiet", func() error { return StopQuiet("c") }, []string{"container", "stop", "c"}},
+		{"DeleteQuiet", func() error { return DeleteQuiet("c") }, []string{"container", "delete", "c"}},
+		{"Logs", func() error { return Logs("c", false) }, []string{"container", "logs", "c"}},
+		{"Logs follow", func() error { return Logs("c", true) }, []string{"container", "logs", "-f", "c"}},
+		{"Build", func() error { return Build([]string{"-t", "img", "."}) }, []string{"container", "build", "-t", "img", "."}},
+		{"NetworkCreate", func() error { return NetworkCreate([]string{"--internal", "net"}) }, []string{"container", "network", "create", "--internal", "net"}},
+		{"NetworkDelete", func() error { return NetworkDelete("net") }, []string{"container", "network", "delete", "net"}},
+		{"VolumeCreate", func() error { return VolumeCreate("v") }, []string{"container", "volume", "create", "v"}},
+		{"VolumeDelete", func() error { return VolumeDelete("v") }, []string{"container", "volume", "delete", "v"}},
+		{"Exec", func() error { return Exec([]string{"c", "sh"}) }, []string{"container", "exec", "c", "sh"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, recorded := fakeExecCommand("", 0)
+			restore := withExecCommand(fake)
+			defer restore()
+
+			if err := tc.call(); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if !reflect.DeepEqual(*recorded, tc.want) {
+				t.Errorf("argv = %v, want %v", *recorded, tc.want)
+			}
+		})
+	}
+}
+
+// fakeExecCommandContext mirrors fakeExecCommand for the CommandContext variant
+// used by LogsFollow.
+func fakeExecCommandContext(stdout string) func(context.Context, string, ...string) *exec.Cmd {
+	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+		cmd := exec.CommandContext(ctx, os.Args[0], cs...)
+		cmd.Env = []string{
+			"GO_WANT_HELPER_PROCESS=1",
+			"HELPER_STDOUT=" + stdout,
+			"HELPER_EXIT_CODE=0",
+		}
+		return cmd
+	}
+}
+
+func withExecCommandContext(fake func(context.Context, string, ...string) *exec.Cmd) func() {
+	orig := execCommandContext
+	execCommandContext = fake
+	return func() { execCommandContext = orig }
+}
+
+func TestLogsFollow(t *testing.T) {
+	t.Run("streams prefixed lines", func(t *testing.T) {
+		restore := withExecCommandContext(fakeExecCommandContext("line1\nline2\n"))
+		defer restore()
+
+		var buf bytes.Buffer
+		LogsFollow(context.Background(), "svc-web", "web", &buf)
+		out := buf.String()
+		if !strings.Contains(out, "web | line1") || !strings.Contains(out, "web | line2") {
+			t.Errorf("unexpected logs output: %q", out)
+		}
+	})
+
+	t.Run("reports start failure", func(t *testing.T) {
+		restore := withExecCommandContext(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, "/nonexistent/apricot-test-binary-xyz")
+		})
+		defer restore()
+
+		var buf bytes.Buffer
+		LogsFollow(context.Background(), "svc-web", "web", &buf)
+		if !strings.Contains(buf.String(), "failed to start") {
+			t.Errorf("expected start-failure message, got %q", buf.String())
 		}
 	})
 }

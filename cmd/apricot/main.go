@@ -16,15 +16,22 @@ func init() {
 	if version != "" && buildTime != "" {
 		return // both set via ldflags
 	}
-
 	info, ok := debug.ReadBuildInfo()
+	version, buildTime = resolveVersionInfo(version, buildTime, info, ok)
+}
+
+// resolveVersionInfo computes the effective version and build time from any
+// ldflags-provided values (ldVersion/ldBuildTime) and the embedded build info.
+// ok reports whether build info was available. Missing pieces fall back to
+// "dev" for the version and the vcs.time setting for the build time.
+func resolveVersionInfo(ldVersion, ldBuildTime string, info *debug.BuildInfo, ok bool) (version, buildTime string) {
+	version, buildTime = ldVersion, ldBuildTime
 	if !ok {
 		if version == "" {
 			version = "dev"
 		}
-		return
+		return version, buildTime
 	}
-
 	if version == "" {
 		if info.Main.Version != "" && info.Main.Version != "(devel)" {
 			version = info.Main.Version
@@ -32,7 +39,6 @@ func init() {
 			version = "dev"
 		}
 	}
-
 	if buildTime == "" {
 		for _, s := range info.Settings {
 			if s.Key == "vcs.time" {
@@ -41,6 +47,7 @@ func init() {
 			}
 		}
 	}
+	return version, buildTime
 }
 
 func main() {
