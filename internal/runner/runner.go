@@ -20,10 +20,11 @@ var (
 
 // Container represents a container from `container list --format json`.
 //
-// The CLI emits a nested object (fields live under "configuration", and the
-// state is reported as top-level "status"), so the JSON is decoded via
-// UnmarshalJSON into the flat fields apricot actually uses. A plain struct with
-// `json:"name"`-style tags would silently leave every field empty.
+// The CLI emits a nested object: identity/image/labels live under
+// "configuration", while the state is reported under "status". The exact shape
+// of "status" changed between CLI versions (see parseState), so the JSON is
+// decoded via UnmarshalJSON into the flat fields apricot actually uses. A plain
+// struct with `json:"name"`-style tags would silently leave every field empty.
 type Container struct {
 	ID     string
 	Name   string
@@ -33,9 +34,10 @@ type Container struct {
 }
 
 // containerJSON mirrors the relevant subset of the nested shape emitted by
-// `container list --format json`.
+// `container list --format json`. "status" is kept raw because its shape
+// differs across CLI versions (a string in 0.8.x, an object in 1.0.x).
 type containerJSON struct {
-	Status        string `json:"status"`
+	Status        json.RawMessage `json:"status"`
 	Configuration struct {
 		ID     string            `json:"id"`
 		Labels map[string]string `json:"labels"`
@@ -55,9 +57,29 @@ func (c *Container) UnmarshalJSON(b []byte) error {
 	c.ID = raw.Configuration.ID
 	c.Name = raw.Configuration.ID
 	c.Image = raw.Configuration.Image.Reference
-	c.State = raw.Status
+	c.State = parseState(raw.Status)
 	c.Labels = raw.Configuration.Labels
 	return nil
+}
+
+// parseState extracts the container state, tolerating both CLI shapes:
+//   - 1.0.x: {"status": {"state": "stopped", ...}}
+//   - 0.8.x: {"status": "stopped"}
+func parseState(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var obj struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil && obj.State != "" {
+		return obj.State
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	return ""
 }
 
 // Run executes `container run` with the given arguments.

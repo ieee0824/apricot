@@ -139,6 +139,61 @@ func TestContainerUnmarshalEdgeCases(t *testing.T) {
 	})
 }
 
+// listJSONv1 is a representative `container list --format json` sample from CLI
+// 1.0.x, where "status" is an object ({state, networks}) instead of the 0.8.x
+// plain string. Identity/image/labels still live under "configuration".
+const listJSONv1 = `[
+  {
+    "id": "myapp-redis",
+    "configuration": {
+      "id": "myapp-redis",
+      "labels": {"apricot.project": "myapp", "apricot.service": "redis"},
+      "image": {"reference": "docker.io/library/redis:6"}
+    },
+    "status": {"state": "running", "networks": []}
+  }
+]`
+
+func TestContainerUnmarshal_V1StatusObject(t *testing.T) {
+	var got []Container
+	if err := json.Unmarshal([]byte(listJSONv1), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d containers, want 1", len(got))
+	}
+	c := got[0]
+	if c.Name != "myapp-redis" || c.Image != "docker.io/library/redis:6" || c.State != "running" {
+		t.Errorf("v1 parse = {Name:%q Image:%q State:%q}, want redis/running", c.Name, c.Image, c.State)
+	}
+	if c.Labels["apricot.project"] != "myapp" {
+		t.Errorf("labels not parsed: %v", c.Labels)
+	}
+}
+
+func TestParseState(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"v1 object", `{"state":"running","networks":[]}`, "running"},
+		{"v0 string", `"stopped"`, "stopped"},
+		{"empty object", `{}`, ""},
+		{"empty string", `""`, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseState([]byte(tt.raw)); got != tt.want {
+				t.Errorf("parseState(%s) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+	if got := parseState(nil); got != "" {
+		t.Errorf("parseState(nil) = %q, want empty", got)
+	}
+}
+
 // fakeExecCommand returns a function suitable for assigning to execCommand. The
 // returned commands re-invoke the test binary so it runs TestHelperProcess,
 // which emits the JSON supplied via stdout and records the argv it received.
