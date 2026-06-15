@@ -10,12 +10,46 @@ import (
 	"os/exec"
 )
 
-// Container represents a running container from `container list --format json`.
+// Container represents a container from `container list --format json`.
+//
+// The CLI emits a nested object (fields live under "configuration", and the
+// state is reported as top-level "status"), so the JSON is decoded via
+// UnmarshalJSON into the flat fields apricot actually uses. A plain struct with
+// `json:"name"`-style tags would silently leave every field empty.
 type Container struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	Image string `json:"image"`
-	State string `json:"state"`
+	ID     string
+	Name   string
+	Image  string
+	State  string
+	Labels map[string]string
+}
+
+// containerJSON mirrors the relevant subset of the nested shape emitted by
+// `container list --format json`.
+type containerJSON struct {
+	Status        string `json:"status"`
+	Configuration struct {
+		ID     string            `json:"id"`
+		Labels map[string]string `json:"labels"`
+		Image  struct {
+			Reference string `json:"reference"`
+		} `json:"image"`
+	} `json:"configuration"`
+}
+
+// UnmarshalJSON flattens the nested CLI output into Container.
+func (c *Container) UnmarshalJSON(b []byte) error {
+	var raw containerJSON
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	// The container's id doubles as its name/handle for stop/delete/logs.
+	c.ID = raw.Configuration.ID
+	c.Name = raw.Configuration.ID
+	c.Image = raw.Configuration.Image.Reference
+	c.State = raw.Status
+	c.Labels = raw.Configuration.Labels
+	return nil
 }
 
 // Run executes `container run` with the given arguments.
