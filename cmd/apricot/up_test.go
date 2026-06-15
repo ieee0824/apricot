@@ -285,11 +285,12 @@ func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
 	}
 }
 
-func TestBuildRunArgs_Init(t *testing.T) {
+func TestBuildRunArgs_Init_NotEmitted(t *testing.T) {
+	// apple container has no --init flag, so it must not be generated.
 	svc := compose.Service{Image: "myapp", Init: true}
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
-	assertContains(t, args, "--init")
+	assertNotContains(t, args, "--init")
 }
 
 func TestBuildRunArgs_DNSSearch(t *testing.T) {
@@ -306,7 +307,8 @@ func TestBuildRunArgs_DNSOpt(t *testing.T) {
 	assertContainsSequence(t, args, "--dns-option", "ndots:2")
 }
 
-func TestBuildRunArgs_Ulimits(t *testing.T) {
+func TestBuildRunArgs_Ulimits_NotEmitted(t *testing.T) {
+	// apple container has no --ulimit flag, so it must not be generated.
 	svc := compose.Service{
 		Image: "myapp",
 		Ulimits: map[string]interface{}{
@@ -315,7 +317,28 @@ func TestBuildRunArgs_Ulimits(t *testing.T) {
 	}
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
-	assertContainsSequence(t, args, "--ulimit", "nofile=1024:2048")
+	assertNotContains(t, args, "--ulimit")
+}
+
+func TestBuildRunArgs_EntrypointExecForm(t *testing.T) {
+	// Exec-form entrypoint: only the first element is the --entrypoint; the rest
+	// must be preserved as container args after the image.
+	svc := compose.Service{
+		Image:      "myapp",
+		Entrypoint: []interface{}{"sh", "-c", "echo hi"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+
+	assertContainsSequence(t, args, "--entrypoint", "sh")
+	imgIdx := slices.Index(args, "myapp")
+	if imgIdx == -1 {
+		t.Fatal("image not found in args")
+	}
+	remaining := args[imgIdx+1:]
+	if !slices.Equal(remaining, []string{"-c", "echo hi"}) {
+		t.Errorf("entrypoint args not preserved after image: got %v", remaining)
+	}
 }
 
 func TestScaleMap_Set_Valid(t *testing.T) {
@@ -435,6 +458,23 @@ func TestEnsureBindMountDirs_PathTraversal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "escapes compose directory") {
 		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestEnsureBindMountDirs_AbsolutePathOutsideBaseAllowed(t *testing.T) {
+	// Absolute host paths outside composeDir (e.g. /etc/localtime, a shared
+	// cache) are legitimate and must not be rejected. apricot leaves them for
+	// the runtime to manage, so no directory is created and no error is returned.
+	base := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "shared-cache")
+	volumes := []string{
+		outside + ":/data",
+	}
+	if err := ensureBindMountDirs(volumes, base); err != nil {
+		t.Fatalf("absolute path outside composeDir should be allowed, got: %v", err)
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Errorf("apricot should not create absolute paths outside composeDir; %q exists", outside)
 	}
 }
 
@@ -671,6 +711,13 @@ func assertContains(t *testing.T, args []string, want string) {
 	t.Helper()
 	if !slices.Contains(args, want) {
 		t.Errorf("expected %q in args %v", want, args)
+	}
+}
+
+func assertNotContains(t *testing.T, args []string, notWant string) {
+	t.Helper()
+	if slices.Contains(args, notWant) {
+		t.Errorf("did not expect %q in args %v", notWant, args)
 	}
 }
 

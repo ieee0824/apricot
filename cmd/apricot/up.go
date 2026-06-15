@@ -170,6 +170,15 @@ func runUp(args []string) {
 	for _, name := range order {
 		svc := cf.Services[name]
 
+		// apple container does not support these compose options; warn once per
+		// service instead of emitting flags the CLI would reject at runtime.
+		if svc.Init {
+			fmt.Fprintf(os.Stderr, "Warning: service %q sets 'init', which apple container does not support; ignoring\n", name)
+		}
+		if svc.Ulimits != nil {
+			fmt.Fprintf(os.Stderr, "Warning: service %q sets 'ulimits', which apple container does not support; ignoring\n", name)
+		}
+
 		// Build image if build: is defined
 		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
 			// Resolve build context relative to the compose file's directory
@@ -374,17 +383,9 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "--dns-option", d)
 	}
 
-	// Init
-	if svc.Init {
-		args = append(args, "--init")
-	}
-
-	// Ulimits
-	for _, u := range compose.ToUlimitSlice(svc.Ulimits) {
-		args = append(args, "--ulimit", u)
-	}
-
-	// Entrypoint
+	// Entrypoint: apple container's --entrypoint takes a single command, so for
+	// exec-form entrypoints (["sh", "-c", ...]) only the first element is the
+	// entrypoint; the rest are passed as container arguments below.
 	entrypointParts := compose.ToStringSlice(svc.Entrypoint)
 	if len(entrypointParts) > 0 {
 		args = append(args, "--entrypoint", entrypointParts[0])
@@ -393,7 +394,11 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	// Image
 	args = append(args, svc.Image)
 
-	// Command (additional arguments after image)
+	// Command: remaining entrypoint args (exec form) come before the service
+	// command, mirroring how an entrypoint array and command compose together.
+	if len(entrypointParts) > 1 {
+		args = append(args, entrypointParts[1:]...)
+	}
 	args = append(args, compose.ToStringSlice(svc.Command)...)
 
 	return args
@@ -462,23 +467,43 @@ func buildImageArgs(imageName string, bc *compose.BuildConfig) ([]string, error)
 
 // ensureBindMountDirs creates host directories for bind mount volumes
 // that don't exist yet. Named volumes (no path prefix) are skipped.
-// The resulting path must stay within composeDir to prevent path traversal.
+//
+// Relative paths are resolved against composeDir and must stay within it, to
+// prevent a compose file from escaping the project directory via "../". Absolute
+// paths are the user's explicit choice: those inside composeDir are created,
+// while those outside it (e.g. /etc/localtime or a shared cache) are left for
+// the runtime to manage rather than being rejected.
 func ensureBindMountDirs(volumes []string, composeDir string) error {
 	for _, v := range volumes {
 		hostPath := parseBindMountHostPath(v)
 		if hostPath == "" {
 			continue
 		}
-		if !filepath.IsAbs(hostPath) {
-			hostPath = filepath.Join(composeDir, hostPath)
+		if filepath.IsAbs(hostPath) {
+			resolved := filepath.Clean(hostPath)
+			if validatePathWithinBase(resolved, composeDir) != nil {
+				continue // absolute path outside the project; not ours to create
+			}
+			if err := mkdirBindMount(resolved); err != nil {
+				return err
+			}
+			continue
 		}
-		hostPath = filepath.Clean(hostPath)
-		if err := validatePathWithinBase(hostPath, composeDir); err != nil {
+		resolved := filepath.Clean(filepath.Join(composeDir, hostPath))
+		if err := validatePathWithinBase(resolved, composeDir); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(hostPath, 0700); err != nil {
-			return fmt.Errorf("failed to create bind mount directory %q: %w", hostPath, err)
+		if err := mkdirBindMount(resolved); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+// mkdirBindMount creates a bind-mount host directory with restrictive perms.
+func mkdirBindMount(path string) error {
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return fmt.Errorf("failed to create bind mount directory %q: %w", path, err)
 	}
 	return nil
 }
