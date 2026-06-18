@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ieee0824/apricot/internal/compose"
 )
@@ -109,6 +112,55 @@ func TestBuildRunArgs_Platform(t *testing.T) {
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertContainsSequence(t, args, "--platform", "linux/arm64")
+}
+
+func TestWaitForHealthy_BecomesHealthy(t *testing.T) {
+	spec := compose.HealthcheckSpec{Cmd: []string{"true"}, Interval: time.Millisecond, Timeout: time.Second, Retries: 5}
+	calls := 0
+	check := func(ctx context.Context, container string, cmd []string) error {
+		calls++
+		if calls < 3 {
+			return errors.New("not ready")
+		}
+		return nil // healthy on the 3rd attempt
+	}
+	if err := waitForHealthy(context.Background(), "c", spec, check); err != nil {
+		t.Fatalf("expected healthy, got %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 checks, got %d", calls)
+	}
+}
+
+func TestWaitForHealthy_GivesUpAfterRetries(t *testing.T) {
+	spec := compose.HealthcheckSpec{Cmd: []string{"false"}, Interval: time.Millisecond, Timeout: time.Second, Retries: 3}
+	calls := 0
+	check := func(ctx context.Context, container string, cmd []string) error {
+		calls++
+		return errors.New("always failing")
+	}
+	err := waitForHealthy(context.Background(), "c", spec, check)
+	if err == nil {
+		t.Fatal("expected error after exhausting retries")
+	}
+	if calls != 3 {
+		t.Errorf("expected 3 attempts, got %d", calls)
+	}
+}
+
+func TestWaitForHealthy_StartPeriodFailuresDontCount(t *testing.T) {
+	// During the start period, failures must not consume the retry budget.
+	spec := compose.HealthcheckSpec{Cmd: []string{"x"}, Interval: time.Millisecond, Timeout: time.Second, Retries: 2, StartPeriod: 50 * time.Millisecond}
+	start := time.Now()
+	check := func(ctx context.Context, container string, cmd []string) error {
+		if time.Since(start) < 50*time.Millisecond {
+			return errors.New("still in start period")
+		}
+		return nil // healthy once past the start period
+	}
+	if err := waitForHealthy(context.Background(), "c", spec, check); err != nil {
+		t.Fatalf("expected eventual healthy despite start-period failures, got %v", err)
+	}
 }
 
 func TestBuildRunArgs_Network_Explicit(t *testing.T) {
