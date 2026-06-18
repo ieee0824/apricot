@@ -776,4 +776,32 @@ func TestHealthcheckNormalize(t *testing.T) {
 			t.Errorf("defaults = %+v", def)
 		}
 	})
+
+	t.Run("empty and insufficient forms have no check", func(t *testing.T) {
+		noCheck := []interface{}{
+			"",                         // empty string
+			[]interface{}{},            // empty list
+			[]interface{}{"CMD-SHELL"}, // CMD-SHELL without a script
+			[]interface{}{42},          // non-string items only
+		}
+		for _, test := range noCheck {
+			if _, ok := (&Healthcheck{Test: test}).Normalize(); ok {
+				t.Errorf("test %v should yield no check", test)
+			}
+		}
+	})
+
+	t.Run("bare list is treated as exec form", func(t *testing.T) {
+		spec, ok := (&Healthcheck{Test: []interface{}{"echo", "ok"}}).Normalize()
+		if !ok || !stringSliceEqual(spec.Cmd, []string{"echo", "ok"}) {
+			t.Errorf("bare list = %v (ok=%v)", spec.Cmd, ok)
+		}
+	})
+
+	t.Run("invalid durations fall back to defaults", func(t *testing.T) {
+		spec, _ := (&Healthcheck{Test: "true", Interval: "bogus", Timeout: "nope"}).Normalize()
+		if spec.Interval != 30*time.Second || spec.Timeout != 30*time.Second {
+			t.Errorf("invalid durations should default, got %+v", spec)
+		}
+	})
 }
