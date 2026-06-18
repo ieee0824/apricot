@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExpandEnv(t *testing.T) {
@@ -685,7 +686,6 @@ services:
 	want := []string{
 		`service "db": "init" is not supported by apricot and will be ignored`,
 		`service "web": "deploy" is not supported by apricot and will be ignored`,
-		`service "web": "healthcheck" is not supported by apricot and will be ignored`,
 		`service "web": "restart" is not supported by apricot and will be ignored`,
 	}
 	if !stringSliceEqual(got, want) {
@@ -706,4 +706,102 @@ services:
 	if got := unsupportedKeyWarnings(yaml); len(got) != 0 {
 		t.Errorf("expected no warnings, got %v", got)
 	}
+}
+
+func TestToDependsOnConditions(t *testing.T) {
+	// List form: all default to service_started.
+	list := ToDependsOnConditions([]interface{}{"db", "redis"})
+	if list["db"] != "service_started" || list["redis"] != "service_started" {
+		t.Errorf("list form = %v", list)
+	}
+	// Map form with conditions.
+	m := ToDependsOnConditions(map[string]interface{}{
+		"db":    map[string]interface{}{"condition": "service_healthy"},
+		"cache": map[string]interface{}{"condition": "service_started"},
+		"bare":  nil,
+	})
+	if m["db"] != "service_healthy" {
+		t.Errorf("db condition = %q, want service_healthy", m["db"])
+	}
+	if m["cache"] != "service_started" {
+		t.Errorf("cache condition = %q", m["cache"])
+	}
+	if m["bare"] != "service_started" {
+		t.Errorf("bare (no condition) = %q, want service_started", m["bare"])
+	}
+}
+
+func TestHealthcheckNormalize(t *testing.T) {
+	t.Run("nil and disabled have no check", func(t *testing.T) {
+		var hc *Healthcheck
+		if _, ok := hc.Normalize(); ok {
+			t.Error("nil healthcheck should have no check")
+		}
+		if _, ok := (&Healthcheck{Disable: true, Test: "true"}).Normalize(); ok {
+			t.Error("disabled healthcheck should have no check")
+		}
+		if _, ok := (&Healthcheck{Test: []interface{}{"NONE"}}).Normalize(); ok {
+			t.Error("NONE test should have no check")
+		}
+	})
+
+	t.Run("CMD form runs argv directly", func(t *testing.T) {
+		spec, ok := (&Healthcheck{Test: []interface{}{"CMD", "curl", "-f", "http://x"}}).Normalize()
+		if !ok {
+			t.Fatal("expected a check")
+		}
+		if !stringSliceEqual(spec.Cmd, []string{"curl", "-f", "http://x"}) {
+			t.Errorf("cmd = %v", spec.Cmd)
+		}
+	})
+
+	t.Run("CMD-SHELL and string run via /bin/sh -c", func(t *testing.T) {
+		shell, _ := (&Healthcheck{Test: []interface{}{"CMD-SHELL", "pg_isready -U me"}}).Normalize()
+		if !stringSliceEqual(shell.Cmd, []string{"/bin/sh", "-c", "pg_isready -U me"}) {
+			t.Errorf("cmd-shell = %v", shell.Cmd)
+		}
+		str, _ := (&Healthcheck{Test: "pg_isready"}).Normalize()
+		if !stringSliceEqual(str.Cmd, []string{"/bin/sh", "-c", "pg_isready"}) {
+			t.Errorf("string form = %v", str.Cmd)
+		}
+	})
+
+	t.Run("durations and retries with defaults", func(t *testing.T) {
+		spec, _ := (&Healthcheck{Test: "true", Interval: "5s", Timeout: "2s", Retries: 4, StartPeriod: "10s"}).Normalize()
+		if spec.Interval != 5*time.Second || spec.Timeout != 2*time.Second || spec.Retries != 4 || spec.StartPeriod != 10*time.Second {
+			t.Errorf("spec = %+v", spec)
+		}
+		def, _ := (&Healthcheck{Test: "true"}).Normalize()
+		if def.Interval != 30*time.Second || def.Timeout != 30*time.Second || def.Retries != 3 || def.StartPeriod != 0 {
+			t.Errorf("defaults = %+v", def)
+		}
+	})
+
+	t.Run("empty and insufficient forms have no check", func(t *testing.T) {
+		noCheck := []interface{}{
+			"",                         // empty string
+			[]interface{}{},            // empty list
+			[]interface{}{"CMD-SHELL"}, // CMD-SHELL without a script
+			[]interface{}{42},          // non-string items only
+		}
+		for _, test := range noCheck {
+			if _, ok := (&Healthcheck{Test: test}).Normalize(); ok {
+				t.Errorf("test %v should yield no check", test)
+			}
+		}
+	})
+
+	t.Run("bare list is treated as exec form", func(t *testing.T) {
+		spec, ok := (&Healthcheck{Test: []interface{}{"echo", "ok"}}).Normalize()
+		if !ok || !stringSliceEqual(spec.Cmd, []string{"echo", "ok"}) {
+			t.Errorf("bare list = %v (ok=%v)", spec.Cmd, ok)
+		}
+	})
+
+	t.Run("invalid durations fall back to defaults", func(t *testing.T) {
+		spec, _ := (&Healthcheck{Test: "true", Interval: "bogus", Timeout: "nope"}).Normalize()
+		if spec.Interval != 30*time.Second || spec.Timeout != 30*time.Second {
+			t.Errorf("invalid durations should default, got %+v", spec)
+		}
+	})
 }

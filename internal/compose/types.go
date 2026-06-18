@@ -19,33 +19,45 @@ type BuildConfig struct {
 
 // Service represents a service in docker-compose.yaml.
 type Service struct {
-	Image         string      `yaml:"image"`
-	Build         interface{} `yaml:"build"`       // string or map
-	Command       interface{} `yaml:"command"`     // string or []string
-	Entrypoint    interface{} `yaml:"entrypoint"`  // string or []string
-	Environment   interface{} `yaml:"environment"` // map[string]string or []string
-	EnvFile       interface{} `yaml:"env_file"`    // string or []string
-	Ports         interface{} `yaml:"ports"`       // []string (short) or []map (long syntax)
-	Volumes       interface{} `yaml:"volumes"`     // []string (short) or []map (long syntax)
-	Networks      interface{} `yaml:"networks"`    // []string or map
-	Labels        interface{} `yaml:"labels"`      // map[string]string or []string
-	WorkingDir    string      `yaml:"working_dir"`
-	User          string      `yaml:"user"`
-	CPUs          float64     `yaml:"cpus"`
-	MemLimit      string      `yaml:"mem_limit"`
-	StdinOpen     bool        `yaml:"stdin_open"`
-	Tty           bool        `yaml:"tty"`
-	DependsOn     interface{} `yaml:"depends_on"` // []string or map
-	ContainerName string      `yaml:"container_name"`
-	ReadOnly      bool        `yaml:"read_only"`
-	Tmpfs         interface{} `yaml:"tmpfs"`      // string or []string
-	DNS           interface{} `yaml:"dns"`        // string or []string
-	DNSSearch     interface{} `yaml:"dns_search"` // string or []string
-	DNSOpt        interface{} `yaml:"dns_opt"`    // string or []string
-	Init          bool        `yaml:"init"`
-	Ulimits       interface{} `yaml:"ulimits"` // map[string]int or map[string]{soft,hard}
-	Restart       string      `yaml:"restart"`
-	Platform      string      `yaml:"platform"`
+	Image         string       `yaml:"image"`
+	Build         interface{}  `yaml:"build"`       // string or map
+	Command       interface{}  `yaml:"command"`     // string or []string
+	Entrypoint    interface{}  `yaml:"entrypoint"`  // string or []string
+	Environment   interface{}  `yaml:"environment"` // map[string]string or []string
+	EnvFile       interface{}  `yaml:"env_file"`    // string or []string
+	Ports         interface{}  `yaml:"ports"`       // []string (short) or []map (long syntax)
+	Volumes       interface{}  `yaml:"volumes"`     // []string (short) or []map (long syntax)
+	Networks      interface{}  `yaml:"networks"`    // []string or map
+	Labels        interface{}  `yaml:"labels"`      // map[string]string or []string
+	WorkingDir    string       `yaml:"working_dir"`
+	User          string       `yaml:"user"`
+	CPUs          float64      `yaml:"cpus"`
+	MemLimit      string       `yaml:"mem_limit"`
+	StdinOpen     bool         `yaml:"stdin_open"`
+	Tty           bool         `yaml:"tty"`
+	DependsOn     interface{}  `yaml:"depends_on"` // []string or map
+	ContainerName string       `yaml:"container_name"`
+	ReadOnly      bool         `yaml:"read_only"`
+	Tmpfs         interface{}  `yaml:"tmpfs"`      // string or []string
+	DNS           interface{}  `yaml:"dns"`        // string or []string
+	DNSSearch     interface{}  `yaml:"dns_search"` // string or []string
+	DNSOpt        interface{}  `yaml:"dns_opt"`    // string or []string
+	Init          bool         `yaml:"init"`
+	Ulimits       interface{}  `yaml:"ulimits"` // map[string]int or map[string]{soft,hard}
+	Restart       string       `yaml:"restart"`
+	Platform      string       `yaml:"platform"`
+	Healthcheck   *Healthcheck `yaml:"healthcheck"`
+}
+
+// Healthcheck mirrors the docker-compose healthcheck block. Test is polymorphic:
+// a string (CMD-SHELL), or a list whose first element is CMD / CMD-SHELL / NONE.
+type Healthcheck struct {
+	Test        interface{} `yaml:"test"` // string or []string
+	Interval    string      `yaml:"interval"`
+	Timeout     string      `yaml:"timeout"`
+	Retries     int         `yaml:"retries"`
+	StartPeriod string      `yaml:"start_period"`
+	Disable     bool        `yaml:"disable"`
 }
 
 // Network represents a network in docker-compose.yaml.

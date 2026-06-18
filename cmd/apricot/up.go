@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/ieee0824/apricot/internal/compose"
 	"github.com/ieee0824/apricot/internal/runner"
@@ -198,8 +199,39 @@ func runUp(args []string) {
 	}
 	var started []startedContainer
 
+	// Pre-compute normalized healthchecks per service for service_healthy waits.
+	healthSpecs := map[string]compose.HealthcheckSpec{}
+	for sname, s := range cf.Services {
+		if spec, ok := s.Healthcheck.Normalize(); ok {
+			healthSpecs[sname] = spec
+		}
+	}
+
 	for _, name := range order {
 		svc := cf.Services[name]
+
+		// Wait for dependencies this service requires to be healthy. Services are
+		// started in dependency order, so a dependency is already running here.
+		for dep, cond := range compose.ToDependsOnConditions(svc.DependsOn) {
+			if cond != "service_healthy" {
+				continue
+			}
+			spec, ok := healthSpecs[dep]
+			if !ok {
+				fmt.Fprintf(os.Stderr, "Warning: service %q depends on %q being healthy, but %q has no healthcheck; not waiting\n", name, dep, dep)
+				continue
+			}
+			for _, sc := range started {
+				if sc.service != dep {
+					continue
+				}
+				fmt.Printf("Waiting for %s to be healthy...\n", sc.name)
+				if err := waitForHealthy(context.Background(), sc.name, spec, runner.ExecCheck); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+			}
+		}
 
 		// Build image if build: is defined
 		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
@@ -300,6 +332,35 @@ func runUp(args []string) {
 		}
 	}
 	wg.Wait()
+}
+
+// waitForHealthy polls a container's healthcheck until it passes, returning an
+// error once the container is considered unhealthy. Failures during the start
+// period do not count toward the retry budget, matching docker healthcheck
+// semantics. The check function (runner.ExecCheck in production) is injected so
+// the loop can be tested without a real container.
+func waitForHealthy(ctx context.Context, container string, spec compose.HealthcheckSpec, check func(context.Context, string, []string) error) error {
+	start := time.Now()
+	failures := 0
+	for {
+		cctx, cancel := context.WithTimeout(ctx, spec.Timeout)
+		err := check(cctx, container, spec.Cmd)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if time.Since(start) >= spec.StartPeriod {
+			failures++
+			if failures >= spec.Retries {
+				return fmt.Errorf("container %s did not become healthy after %d attempts", container, failures)
+			}
+		}
+		select {
+		case <-time.After(spec.Interval):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // buildRunArgs converts a Service to `container run` arguments (excluding -d and the command itself).

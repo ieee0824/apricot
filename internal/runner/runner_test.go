@@ -428,6 +428,42 @@ func withExecCommandContext(fake func(context.Context, string, ...string) *exec.
 	return func() { execCommandContext = orig }
 }
 
+func TestExecCheck(t *testing.T) {
+	t.Run("exit 0 returns nil with correct argv", func(t *testing.T) {
+		var recorded []string
+		restore := withExecCommandContext(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			recorded = append([]string{name}, args...)
+			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+			cmd := exec.CommandContext(ctx, os.Args[0], cs...)
+			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "HELPER_EXIT_CODE=0"}
+			return cmd
+		})
+		defer restore()
+
+		if err := ExecCheck(context.Background(), "myctr", []string{"pg_isready", "-U", "me"}); err != nil {
+			t.Fatalf("expected nil, got %v", err)
+		}
+		want := []string{"container", "exec", "myctr", "pg_isready", "-U", "me"}
+		if !reflect.DeepEqual(recorded, want) {
+			t.Errorf("argv = %v, want %v", recorded, want)
+		}
+	})
+
+	t.Run("non-zero exit returns error", func(t *testing.T) {
+		restore := withExecCommandContext(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			cs := append([]string{"-test.run=TestHelperProcess", "--", name}, args...)
+			cmd := exec.CommandContext(ctx, os.Args[0], cs...)
+			cmd.Env = []string{"GO_WANT_HELPER_PROCESS=1", "HELPER_EXIT_CODE=1"}
+			return cmd
+		})
+		defer restore()
+
+		if err := ExecCheck(context.Background(), "myctr", []string{"false"}); err == nil {
+			t.Fatal("expected error for non-zero exit")
+		}
+	})
+}
+
 func TestLogsFollow(t *testing.T) {
 	t.Run("streams prefixed lines", func(t *testing.T) {
 		restore := withExecCommandContext(fakeExecCommandContext("line1\nline2\n"))

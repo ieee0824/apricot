@@ -143,7 +143,8 @@ apricot exec -w /app web pwd    # specify working directory
 | `dns_opt` | ✅ |
 | `init` | ❌ (not supported by Apple Container) |
 | `ulimits` | ❌ (not supported by Apple Container) |
-| `depends_on` | ✅ (startup order only) |
+| `depends_on` | ✅ (startup order + `condition: service_healthy`) |
+| `healthcheck` | ✅ (used for `service_healthy` waits) |
 | `container_name` | ✅ |
 | `restart` | ❌ (not supported) |
 
@@ -151,4 +152,5 @@ apricot exec -w /app web pwd    # specify working directory
 
 - **networks**: Non-default network configuration requires macOS 26 or newer (Apple Container runtime limitation). On older macOS versions, `networks` settings are automatically skipped with a warning.
 - **init / ulimits**: The Apple Container CLI has no `--init` or `--ulimit` option, so these settings are ignored (with a warning) rather than passed through.
-- **Unsupported keys**: Any service key apricot does not handle (e.g. `healthcheck`, `deploy`, `restart`, `extends`, `profiles`) is reported with a warning when the compose file is loaded, instead of being silently dropped.
+- **healthcheck**: Apple Container has no native healthcheck, so apricot runs the `test` command inside the container via `container exec` (honoring `interval` / `timeout` / `retries` / `start_period`). It is used to satisfy `depends_on: { x: { condition: service_healthy } }`, which makes `up` wait for a dependency to become healthy before starting dependents. `condition: service_completed_successfully` is not yet supported.
+- **Unsupported keys**: Any service key apricot does not handle (e.g. `deploy`, `restart`, `extends`, `profiles`) is reported with a warning when the compose file is loaded, instead of being silently dropped.

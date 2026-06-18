@@ -222,6 +222,14 @@ func VolumeDelete(name string) error {
 	return cmd.Run()
 }
 
+// ExecCheck runs cmd inside the named container and returns nil only if it exits
+// zero. Output is discarded; it is used for health probing. The supplied context
+// bounds how long the probe may run.
+func ExecCheck(ctx context.Context, container string, cmd []string) error {
+	args := append([]string{"exec", container}, cmd...)
+	return execCommandContext(ctx, "container", args...).Run()
+}
+
 // Exec runs `container exec` with the given args (options + container + command).
 func Exec(args []string) error {
 	cmdArgs := append([]string{"exec"}, args...)

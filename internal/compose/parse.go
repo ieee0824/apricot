@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -75,7 +76,7 @@ var handledServiceKeys = map[string]bool{
 	"cpus": true, "mem_limit": true, "stdin_open": true, "tty": true,
 	"depends_on": true, "container_name": true, "read_only": true,
 	"tmpfs": true, "dns": true, "dns_search": true, "dns_opt": true,
-	"platform": true,
+	"platform": true, "healthcheck": true,
 }
 
 // unsupportedKeyWarnings returns one warning per service key apricot does not
@@ -320,6 +321,115 @@ func ToNetworkNames(v interface{}) []string {
 // ToDependsOn converts depends_on field ([]string or map) to service name slice.
 func ToDependsOn(v interface{}) []string {
 	return ToNetworkNames(v)
+}
+
+// ToDependsOnConditions returns each dependency service mapped to its startup
+// condition. The list form and bare map keys default to "service_started"; the
+// long map form ({db: {condition: service_healthy}}) captures the condition.
+func ToDependsOnConditions(v interface{}) map[string]string {
+	result := map[string]string{}
+	switch val := v.(type) {
+	case []interface{}:
+		for _, item := range val {
+			if s, ok := item.(string); ok {
+				result[s] = "service_started"
+			}
+		}
+	case map[string]interface{}:
+		for k, cv := range val {
+			cond := "service_started"
+			if m, ok := cv.(map[string]interface{}); ok {
+				if c, ok := m["condition"].(string); ok && c != "" {
+					cond = c
+				}
+			}
+			result[k] = cond
+		}
+	}
+	return result
+}
+
+// HealthcheckSpec is a normalized, runnable healthcheck.
+type HealthcheckSpec struct {
+	Cmd         []string // argv to exec inside the container
+	Interval    time.Duration
+	Timeout     time.Duration
+	Retries     int
+	StartPeriod time.Duration
+}
+
+// Normalize resolves a Healthcheck into a runnable spec. The second return value
+// is false when there is no check to run (nil, disabled, or test: ["NONE"]).
+func (h *Healthcheck) Normalize() (HealthcheckSpec, bool) {
+	if h == nil || h.Disable {
+		return HealthcheckSpec{}, false
+	}
+	cmd := healthcheckCmd(h.Test)
+	if len(cmd) == 0 {
+		return HealthcheckSpec{}, false
+	}
+	return HealthcheckSpec{
+		Cmd:         cmd,
+		Interval:    parseDurationOr(h.Interval, 30*time.Second),
+		Timeout:     parseDurationOr(h.Timeout, 30*time.Second),
+		Retries:     orInt(h.Retries, 3),
+		StartPeriod: parseDurationOr(h.StartPeriod, 0),
+	}, true
+}
+
+// healthcheckCmd converts the polymorphic test field into the argv to exec.
+// Returns nil when the check is absent or explicitly disabled via ["NONE"].
+func healthcheckCmd(test interface{}) []string {
+	switch t := test.(type) {
+	case string:
+		if t == "" {
+			return nil
+		}
+		return []string{"/bin/sh", "-c", t}
+	case []interface{}:
+		parts := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) == 0 {
+			return nil
+		}
+		switch parts[0] {
+		case "NONE":
+			return nil
+		case "CMD":
+			return parts[1:]
+		case "CMD-SHELL":
+			if len(parts) < 2 {
+				return nil
+			}
+			return []string{"/bin/sh", "-c", strings.Join(parts[1:], " ")}
+		default:
+			return parts // lenient: treat as a bare exec form
+		}
+	}
+	return nil
+}
+
+func parseDurationOr(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		warnf("invalid healthcheck duration %q, using %s", s, def)
+		return def
+	}
+	return d
+}
+
+func orInt(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
 }
 
 // ToBuildConfig converts the build: field (string or map) to a BuildConfig.
