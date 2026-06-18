@@ -21,6 +21,8 @@ go.work.sum
 # Build output
 dist/
 bin/
+# Compiled CLI binary (output of `go build ./cmd/apricot`)
+/apricot
 
 # IDE
 .idea/
