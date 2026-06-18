@@ -187,7 +187,7 @@ volumes:
 	if cf.Services["web"].Image != "nginx:latest" {
 		t.Errorf("expected image nginx:latest, got %s", cf.Services["web"].Image)
 	}
-	if len(cf.Services["web"].Ports) != 1 || cf.Services["web"].Ports[0] != "8080:80" {
+	if ports := ToPortList(cf.Services["web"].Ports); len(ports) != 1 || ports[0] != "8080:80" {
 		t.Errorf("unexpected ports: %v", cf.Services["web"].Ports)
 	}
 	if _, ok := cf.Networks["mynet"]; !ok {
@@ -376,12 +376,12 @@ services:
 	if web.Image != "myapp:v2" {
 		t.Errorf("expected image myapp:v2, got %q", web.Image)
 	}
-	if len(web.Ports) != 1 || web.Ports[0] != "9090:80" {
+	if ports := ToPortList(web.Ports); len(ports) != 1 || ports[0] != "9090:80" {
 		t.Errorf("expected port 9090:80, got %v", web.Ports)
 	}
 	home := os.Getenv("HOME")
 	expected := home + "/data:/data"
-	if len(web.Volumes) != 1 || web.Volumes[0] != expected {
+	if vols := ToVolumeList(web.Volumes); len(vols) != 1 || vols[0] != expected {
 		t.Errorf("expected volume %q, got %v", expected, web.Volumes)
 	}
 }
@@ -613,5 +613,97 @@ func TestToNetworkNames_DropsNonString(t *testing.T) {
 	got := ToNetworkNames([]interface{}{"frontend", 7})
 	if !stringSliceEqual(got, []string{"frontend"}) {
 		t.Errorf("ToNetworkNames() = %v, want [frontend]", got)
+	}
+}
+
+func TestToPortList(t *testing.T) {
+	tests := []struct {
+		name string
+		in   interface{}
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"short strings", []interface{}{"8080:80", "443:443/tcp"}, []string{"8080:80", "443:443/tcp"}},
+		{"[]string form", []string{"8080:80"}, []string{"8080:80"}},
+		{"long published+target", []interface{}{map[string]interface{}{"target": 80, "published": 8080}}, []string{"8080:80"}},
+		{"long with protocol", []interface{}{map[string]interface{}{"target": 80, "published": 8080, "protocol": "tcp"}}, []string{"8080:80/tcp"}},
+		{"long with host_ip", []interface{}{map[string]interface{}{"target": 80, "published": 8080, "host_ip": "127.0.0.1"}}, []string{"127.0.0.1:8080:80"}},
+		{"long host_ip without published", []interface{}{map[string]interface{}{"target": 80, "host_ip": "127.0.0.1"}}, []string{"127.0.0.1:80:80"}},
+		{"long host_ip without published, with proto", []interface{}{map[string]interface{}{"target": 80, "host_ip": "127.0.0.1", "protocol": "udp"}}, []string{"127.0.0.1:80:80/udp"}},
+		{"invalid protocol omitted", []interface{}{map[string]interface{}{"target": 80, "published": 8080, "protocol": true}}, []string{"8080:80"}},
+		{"long target only", []interface{}{map[string]interface{}{"target": 80}}, []string{"80"}},
+		{"mixed short and long", []interface{}{"5432:5432", map[string]interface{}{"target": 80, "published": 8080}}, []string{"5432:5432", "8080:80"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ToPortList(tt.in); !stringSliceEqual(got, tt.want) {
+				t.Errorf("ToPortList(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToVolumeList(t *testing.T) {
+	tests := []struct {
+		name string
+		in   interface{}
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"short strings", []interface{}{"./data:/data", "named:/var"}, []string{"./data:/data", "named:/var"}},
+		{"[]string form", []string{"/a:/b"}, []string{"/a:/b"}},
+		{"long bind", []interface{}{map[string]interface{}{"type": "bind", "source": "./data", "target": "/data"}}, []string{"./data:/data"}},
+		{"long read_only", []interface{}{map[string]interface{}{"source": "./cfg", "target": "/cfg", "read_only": true}}, []string{"./cfg:/cfg:ro"}},
+		{"long anonymous (target only)", []interface{}{map[string]interface{}{"target": "/cache"}}, []string{"/cache"}},
+		{"long anonymous read_only", []interface{}{map[string]interface{}{"target": "/cache", "read_only": true}}, []string{"/cache:ro"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ToVolumeList(tt.in); !stringSliceEqual(got, tt.want) {
+				t.Errorf("ToVolumeList(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestUnsupportedKeyWarnings(t *testing.T) {
+	yaml := `
+services:
+  web:
+    image: nginx
+    ports: ["80:80"]
+    healthcheck:
+      test: ["CMD", "true"]
+    restart: always
+    deploy:
+      replicas: 3
+  db:
+    image: postgres
+    init: true
+`
+	got := unsupportedKeyWarnings(yaml)
+	want := []string{
+		`service "db": "init" is not supported by apricot and will be ignored`,
+		`service "web": "deploy" is not supported by apricot and will be ignored`,
+		`service "web": "healthcheck" is not supported by apricot and will be ignored`,
+		`service "web": "restart" is not supported by apricot and will be ignored`,
+	}
+	if !stringSliceEqual(got, want) {
+		t.Errorf("unsupportedKeyWarnings() =\n  %v\nwant\n  %v", got, want)
+	}
+}
+
+func TestUnsupportedKeyWarnings_AllSupported(t *testing.T) {
+	yaml := `
+services:
+  web:
+    image: nginx
+    ports: ["80:80"]
+    volumes: ["./data:/data"]
+    environment: {FOO: bar}
+    platform: linux/arm64
+`
+	if got := unsupportedKeyWarnings(yaml); len(got) != 0 {
+		t.Errorf("expected no warnings, got %v", got)
 	}
 }

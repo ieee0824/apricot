@@ -120,14 +120,15 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 |---|---|
 | `image` | ✅ |
 | `build` | ✅ |
-| `ports` | ✅ |
-| `volumes` | ✅ |
+| `ports` | ✅ (短縮・ロング構文) |
+| `volumes` | ✅ (短縮・ロング構文) |
 | `environment` | ✅ |
 | `env_file` | ✅ |
 | `working_dir` | ✅ |
 | `user` | ✅ |
 | `entrypoint` | ✅ |
 | `command` | ✅ |
+| `platform` | ✅ |
 | `networks` | ⚠️ (macOS 26+) |
 | `labels` | ✅ |
 | `cpus` | ✅ |
@@ -139,8 +140,8 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | `dns` | ✅ |
 | `dns_search` | ✅ |
 | `dns_opt` | ✅ |
-| `init` | ✅ |
-| `ulimits` | ✅ |
+| `init` | ❌ (Apple Container 非対応) |
+| `ulimits` | ❌ (Apple Container 非対応) |
 | `depends_on` | ✅ (起動順序のみ) |
 | `container_name` | ✅ |
 | `restart` | ❌ (未対応) |
@@ -148,3 +149,5 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 ## 制限事項
 
 - **networks**: デフォルト以外のネットワーク設定には macOS 26 以降が必要です（Apple Container ランタイムの制限）。macOS 26 未満では `networks` 設定は警告を出して自動的にスキップされます。
+- **init / ulimits**: Apple Container CLI には `--init` / `--ulimit` オプションが無いため、これらの設定は（警告を出した上で）無視されます。
+- **未対応キー**: apricot が扱わないサービスキー（`healthcheck` / `deploy` / `restart` / `extends` / `profiles` など）は、compose ファイル読み込み時に警告を出します（無言で破棄しません）。

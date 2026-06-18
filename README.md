@@ -121,14 +121,15 @@ apricot exec -w /app web pwd    # specify working directory
 |---|---|
 | `image` | ✅ |
 | `build` | ✅ |
-| `ports` | ✅ |
-| `volumes` | ✅ |
+| `ports` | ✅ (short and long syntax) |
+| `volumes` | ✅ (short and long syntax) |
 | `environment` | ✅ |
 | `env_file` | ✅ |
 | `working_dir` | ✅ |
 | `user` | ✅ |
 | `entrypoint` | ✅ |
 | `command` | ✅ |
+| `platform` | ✅ |
 | `networks` | ⚠️ (macOS 26+) |
 | `labels` | ✅ |
 | `cpus` | ✅ |
@@ -150,3 +151,4 @@ apricot exec -w /app web pwd    # specify working directory
 
 - **networks**: Non-default network configuration requires macOS 26 or newer (Apple Container runtime limitation). On older macOS versions, `networks` settings are automatically skipped with a warning.
 - **init / ulimits**: The Apple Container CLI has no `--init` or `--ulimit` option, so these settings are ignored (with a warning) rather than passed through.
+- **Unsupported keys**: Any service key apricot does not handle (e.g. `healthcheck`, `deploy`, `restart`, `extends`, `profiles`) is reported with a warning when the compose file is loaded, instead of being silently dropped.

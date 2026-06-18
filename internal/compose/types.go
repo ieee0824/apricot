@@ -20,13 +20,13 @@ type BuildConfig struct {
 // Service represents a service in docker-compose.yaml.
 type Service struct {
 	Image         string      `yaml:"image"`
-	Build         interface{} `yaml:"build"` // string or map
+	Build         interface{} `yaml:"build"`       // string or map
 	Command       interface{} `yaml:"command"`     // string or []string
 	Entrypoint    interface{} `yaml:"entrypoint"`  // string or []string
 	Environment   interface{} `yaml:"environment"` // map[string]string or []string
 	EnvFile       interface{} `yaml:"env_file"`    // string or []string
-	Ports         []string    `yaml:"ports"`
-	Volumes       []string    `yaml:"volumes"`
+	Ports         interface{} `yaml:"ports"`       // []string (short) or []map (long syntax)
+	Volumes       interface{} `yaml:"volumes"`     // []string (short) or []map (long syntax)
 	Networks      interface{} `yaml:"networks"`    // []string or map
 	Labels        interface{} `yaml:"labels"`      // map[string]string or []string
 	WorkingDir    string      `yaml:"working_dir"`
@@ -45,6 +45,7 @@ type Service struct {
 	Init          bool        `yaml:"init"`
 	Ulimits       interface{} `yaml:"ulimits"` // map[string]int or map[string]{soft,hard}
 	Restart       string      `yaml:"restart"`
+	Platform      string      `yaml:"platform"`
 }
 
 // Network represents a network in docker-compose.yaml.

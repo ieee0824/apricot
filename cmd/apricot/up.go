@@ -201,15 +201,6 @@ func runUp(args []string) {
 	for _, name := range order {
 		svc := cf.Services[name]
 
-		// apple container does not support these compose options; warn once per
-		// service instead of emitting flags the CLI would reject at runtime.
-		if svc.Init {
-			fmt.Fprintf(os.Stderr, "Warning: service %q sets 'init', which apple container does not support; ignoring\n", name)
-		}
-		if svc.Ulimits != nil {
-			fmt.Fprintf(os.Stderr, "Warning: service %q sets 'ulimits', which apple container does not support; ignoring\n", name)
-		}
-
 		// Build image if build: is defined
 		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
 			// Resolve build context relative to the compose file's directory
@@ -254,7 +245,7 @@ func runUp(args []string) {
 				fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
 			}
 
-			if err := ensureBindMountDirs(svc.Volumes, composeDir); err != nil {
+			if err := ensureBindMountDirs(compose.ToVolumeList(svc.Volumes), composeDir); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -317,8 +308,13 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 
 	args = append(args, "--name", containerName)
 
+	// Platform
+	if svc.Platform != "" {
+		args = append(args, "--platform", svc.Platform)
+	}
+
 	// Ports
-	for _, p := range svc.Ports {
+	for _, p := range compose.ToPortList(svc.Ports) {
 		args = append(args, "-p", p)
 	}
 
@@ -336,7 +332,7 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	}
 
 	// Volumes
-	for _, v := range svc.Volumes {
+	for _, v := range compose.ToVolumeList(svc.Volumes) {
 		v = resolveVolumeHostPath(v, composeDir)
 		args = append(args, "-v", v)
 	}

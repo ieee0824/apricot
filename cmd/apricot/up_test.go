@@ -80,6 +80,37 @@ func TestBuildRunArgs_Volumes(t *testing.T) {
 	assertContainsSequence(t, args, "-v", "/tmp:/tmp")
 }
 
+func TestBuildRunArgs_Ports_LongSyntax(t *testing.T) {
+	svc := compose.Service{
+		Image: "myapp",
+		Ports: []interface{}{
+			map[string]interface{}{"target": 80, "published": 8080, "protocol": "tcp"},
+		},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "-p", "8080:80/tcp")
+}
+
+func TestBuildRunArgs_Volumes_LongSyntax(t *testing.T) {
+	svc := compose.Service{
+		Image: "myapp",
+		Volumes: []interface{}{
+			map[string]interface{}{"type": "bind", "source": "/abs/data", "target": "/data", "read_only": true},
+		},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "-v", "/abs/data:/data:ro")
+}
+
+func TestBuildRunArgs_Platform(t *testing.T) {
+	svc := compose.Service{Image: "myapp", Platform: "linux/arm64"}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "--platform", "linux/arm64")
+}
+
 func TestBuildRunArgs_Network_Explicit(t *testing.T) {
 	svc := compose.Service{
 		Image:    "myapp",

@@ -3,6 +3,8 @@ package compose
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -56,7 +58,56 @@ func Load(path string) (*ComposeFile, error) {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
+	for _, w := range unsupportedKeyWarnings(expanded) {
+		warnf("%s", w)
+	}
+
 	return &cf, nil
+}
+
+// handledServiceKeys are the docker-compose service keys apricot actually acts
+// on. Any other key present in a service is parsed-but-ignored, so it is
+// surfaced as a warning rather than being silently dropped.
+var handledServiceKeys = map[string]bool{
+	"image": true, "build": true, "command": true, "entrypoint": true,
+	"environment": true, "env_file": true, "ports": true, "volumes": true,
+	"networks": true, "labels": true, "working_dir": true, "user": true,
+	"cpus": true, "mem_limit": true, "stdin_open": true, "tty": true,
+	"depends_on": true, "container_name": true, "read_only": true,
+	"tmpfs": true, "dns": true, "dns_search": true, "dns_opt": true,
+	"platform": true,
+}
+
+// unsupportedKeyWarnings returns one warning per service key apricot does not
+// handle (e.g. healthcheck, deploy, restart, init, ulimits). Output is sorted
+// for stable, testable results.
+func unsupportedKeyWarnings(expanded string) []string {
+	var raw struct {
+		Services map[string]map[string]yaml.Node `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(expanded), &raw); err != nil {
+		return nil
+	}
+	services := make([]string, 0, len(raw.Services))
+	for name := range raw.Services {
+		services = append(services, name)
+	}
+	sort.Strings(services)
+
+	var warnings []string
+	for _, name := range services {
+		keys := make([]string, 0)
+		for k := range raw.Services[name] {
+			if !handledServiceKeys[k] {
+				keys = append(keys, k)
+			}
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			warnings = append(warnings, fmt.Sprintf("service %q: %q is not supported by apricot and will be ignored", name, k))
+		}
+	}
+	return warnings
 }
 
 // ToStringSlice converts an interface{} that is either a string or []interface{} to []string.
@@ -109,6 +160,135 @@ func ToEnvSlice(v interface{}) []string {
 		return result
 	}
 	return nil
+}
+
+// ToPortList converts the ports field to short "host:container[/proto]" specs.
+// docker compose accepts both the short string form ("8080:80") and the long
+// mapping form ({target:, published:, protocol:, host_ip:}); both are handled.
+func ToPortList(v interface{}) []string {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case string:
+		return []string{val}
+	case []string:
+		return append([]string(nil), val...)
+	case []interface{}:
+		result := make([]string, 0, len(val))
+		for _, item := range val {
+			switch p := item.(type) {
+			case string:
+				result = append(result, p)
+			case map[string]interface{}:
+				if spec := portMapToSpec(p); spec != "" {
+					result = append(result, spec)
+				} else {
+					warnf("ignoring port entry without a target: %v", p)
+				}
+			default:
+				warnf("ignoring unsupported port entry %v", item)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// portMapToSpec renders a long-form port map as "[host_ip:][published:]target[/proto]".
+func portMapToSpec(m map[string]interface{}) string {
+	target := scalarToString(m["target"])
+	if target == "" {
+		return ""
+	}
+	published := scalarToString(m["published"])
+	hostIP := scalarToString(m["host_ip"])
+	// A host_ip needs an explicit host port to form a valid 3-field spec
+	// (host_ip:published:target); otherwise "host_ip:target" is ambiguous and
+	// rejected by the CLI. Default the published port to the target port.
+	if hostIP != "" && published == "" {
+		published = target
+	}
+	spec := target
+	if published != "" {
+		spec = published + ":" + target
+	}
+	if hostIP != "" {
+		spec = hostIP + ":" + spec
+	}
+	if proto := scalarToString(m["protocol"]); proto != "" {
+		if proto == "tcp" || proto == "udp" {
+			spec += "/" + proto
+		} else {
+			warnf("ignoring invalid port protocol %q (must be tcp or udp)", proto)
+		}
+	}
+	return spec
+}
+
+// ToVolumeList converts the volumes field to short "source:target[:ro]" specs.
+// docker compose accepts both the short string form and the long mapping form
+// ({type:, source:, target:, read_only:}); both are handled.
+func ToVolumeList(v interface{}) []string {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case string:
+		return []string{val}
+	case []string:
+		return append([]string(nil), val...)
+	case []interface{}:
+		result := make([]string, 0, len(val))
+		for _, item := range val {
+			switch vol := item.(type) {
+			case string:
+				result = append(result, vol)
+			case map[string]interface{}:
+				if spec := volumeMapToSpec(vol); spec != "" {
+					result = append(result, spec)
+				} else {
+					warnf("ignoring volume entry without a target: %v", vol)
+				}
+			default:
+				warnf("ignoring unsupported volume entry %v", item)
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// volumeMapToSpec renders a long-form volume map as "[source:]target[:ro]".
+func volumeMapToSpec(m map[string]interface{}) string {
+	target := scalarToString(m["target"])
+	if target == "" {
+		return ""
+	}
+	spec := target
+	if source := scalarToString(m["source"]); source != "" {
+		spec = source + ":" + target
+	}
+	if ro, _ := m["read_only"].(bool); ro {
+		spec += ":ro"
+	}
+	return spec
+}
+
+// scalarToString renders a YAML scalar (string/int/float/bool) as a string.
+func scalarToString(v interface{}) string {
+	switch x := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return x
+	case int:
+		return strconv.Itoa(x)
+	case float64:
+		return strconv.Itoa(int(x))
+	case bool:
+		return strconv.FormatBool(x)
+	default:
+		return fmt.Sprintf("%v", x)
+	}
 }
 
 // ToNetworkNames converts networks field ([]string or map) to network name slice.
