@@ -206,6 +206,15 @@ func NetworkCreate(args []string) error {
 	return cmd.Run()
 }
 
+// ImageExists reports whether the named image exists in the local store,
+// based on the exit status of `container image inspect`.
+func ImageExists(name string) bool {
+	cmd := execCommand("container", "image", "inspect", name)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
+}
+
 // NetworkExists reports whether the named network exists, based on the exit
 // status of `container network inspect`.
 func NetworkExists(name string) bool {
