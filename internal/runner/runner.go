@@ -206,6 +206,24 @@ func NetworkCreate(args []string) error {
 	return cmd.Run()
 }
 
+// NetworkExists reports whether the named network exists, based on the exit
+// status of `container network inspect`.
+func NetworkExists(name string) bool {
+	cmd := execCommand("container", "network", "inspect", name)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
+}
+
+// VolumeExists reports whether the named volume exists, based on the exit
+// status of `container volume inspect`.
+func VolumeExists(name string) bool {
+	cmd := execCommand("container", "volume", "inspect", name)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
+}
+
 // VolumeCreate creates a volume.
 func VolumeCreate(name string) error {
 	cmd := execCommand("container", "volume", "create", name)

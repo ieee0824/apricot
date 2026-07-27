@@ -137,6 +137,9 @@ func runUp(args []string) {
 			continue
 		}
 		networkName := projectName + "_" + name
+		if runner.NetworkExists(networkName) {
+			continue
+		}
 		fmt.Printf("Creating network %s\n", networkName)
 		if err := runner.NetworkCreate(buildNetworkCreateArgs(networkName, net)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: network create failed for %s: %v\n", networkName, err)
@@ -146,6 +149,9 @@ func runUp(args []string) {
 	// Create volumes
 	for name := range cf.Volumes {
 		volumeName := projectName + "_" + name
+		if runner.VolumeExists(volumeName) {
+			continue
+		}
 		fmt.Printf("Creating volume %s\n", volumeName)
 		if err := runner.VolumeCreate(volumeName); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: volume create failed for %s: %v\n", volumeName, err)
