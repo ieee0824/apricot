@@ -142,15 +142,20 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | `dns_opt` | ✅ |
 | `init` | ✅ (`container run --init` にマッピング) |
 | `ulimits` | ✅ (`container run --ulimit` にマッピング) |
+| `cap_add` | ✅ (`container run --cap-add` にマッピング) |
+| `cap_drop` | ✅ (`container run --cap-drop` にマッピング) |
 | `depends_on` | ✅ (起動順序 + `condition: service_healthy`) |
 | `healthcheck` | ✅ (`service_healthy` 待ちに使用) |
 | `container_name` | ✅ |
 | `restart` | ❌ (未対応) |
+| `security_opt` | ❌ (Apple Container に相当機能なし) |
 
 ## 制限事項
 
 - **networks**: デフォルト以外のネットワーク設定には macOS 26 以降が必要です（Apple Container ランタイムの制限）。macOS 26 未満では `networks` 設定は警告を出して自動的にスキップされます。
 - **init**: `init: true` は `container run --init` として渡され、シグナル転送とゾンビプロセスの刈り取りを行う init プロセスが起動します（Apple Container v1.1.0 以降）。
 - **ulimits**: shorthand（`nofile: 1024`）と long form（`nofile: {soft: 1024, hard: 2048}`）の両方に対応し、`container run --ulimit <type>=<soft>[:<hard>]` として渡されます（Apple Container v1.1.0 以降）。
+- **cap_add / cap_drop**: `container run --cap-add` / `--cap-drop` として渡されます（Apple Container v0.12.0 以降）。capability 名はプレフィックス付き（`CAP_NET_RAW`）・なし（`NET_RAW`）のどちらでも動作し、`ALL` も使えます。
+- **security_opt**: Apple Container CLI には `--security-opt` 相当のオプションがありません（VM 単位で分離するモデルのため seccomp / AppArmor プロファイルは適用対象外）。この設定は警告を出した上で無視されます。
 - **healthcheck**: Apple Container はネイティブの healthcheck を持たないため、apricot が `test` コマンドを `container exec` でコンテナ内実行して判定します（`interval` / `timeout` / `retries` / `start_period` を尊重）。`depends_on: { x: { condition: service_healthy } }` を満たすために使われ、依存先が healthy になるまで `up` が待機します。`condition: service_completed_successfully` は未対応です。
 - **未対応キー**: apricot が扱わないサービスキー（`deploy` / `restart` / `extends` / `profiles` など）は、compose ファイル読み込み時に警告を出します（無言で破棄しません）。

@@ -143,15 +143,20 @@ apricot exec -w /app web pwd    # specify working directory
 | `dns_opt` | ✅ |
 | `init` | ✅ (maps to `container run --init`) |
 | `ulimits` | ✅ (maps to `container run --ulimit`) |
+| `cap_add` | ✅ (maps to `container run --cap-add`) |
+| `cap_drop` | ✅ (maps to `container run --cap-drop`) |
 | `depends_on` | ✅ (startup order + `condition: service_healthy`) |
 | `healthcheck` | ✅ (used for `service_healthy` waits) |
 | `container_name` | ✅ |
 | `restart` | ❌ (not supported) |
+| `security_opt` | ❌ (Apple Container has no equivalent) |
 
 ## Limitations
 
 - **networks**: Non-default network configuration requires macOS 26 or newer (Apple Container runtime limitation). On older macOS versions, `networks` settings are automatically skipped with a warning.
 - **init**: `init: true` is passed through as `container run --init`, which runs an init process that forwards signals and reaps zombie processes (Apple Container v1.1.0+).
 - **ulimits**: Both the shorthand (`nofile: 1024`) and long form (`nofile: {soft: 1024, hard: 2048}`) are passed through as `container run --ulimit <type>=<soft>[:<hard>]` (Apple Container v1.1.0+).
+- **cap_add / cap_drop**: Passed through as `container run --cap-add` / `--cap-drop` (Apple Container v0.12.0+). Both prefixed (`CAP_NET_RAW`) and unprefixed (`NET_RAW`) capability names work, as does `ALL`.
+- **security_opt**: The Apple Container CLI has no `--security-opt` equivalent (seccomp/AppArmor profiles do not apply to its VM-per-container isolation model), so this setting is ignored with a warning.
 - **healthcheck**: Apple Container has no native healthcheck, so apricot runs the `test` command inside the container via `container exec` (honoring `interval` / `timeout` / `retries` / `start_period`). It is used to satisfy `depends_on: { x: { condition: service_healthy } }`, which makes `up` wait for a dependency to become healthy before starting dependents. `condition: service_completed_successfully` is not yet supported.
 - **Unsupported keys**: Any service key apricot does not handle (e.g. `deploy`, `restart`, `extends`, `profiles`) is reported with a warning when the compose file is loaded, instead of being silently dropped.

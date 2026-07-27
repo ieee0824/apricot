@@ -77,6 +77,7 @@ var handledServiceKeys = map[string]bool{
 	"depends_on": true, "container_name": true, "read_only": true,
 	"tmpfs": true, "dns": true, "dns_search": true, "dns_opt": true,
 	"platform": true, "healthcheck": true, "init": true, "ulimits": true,
+	"cap_add": true, "cap_drop": true,
 }
 
 // unsupportedKeyWarnings returns one warning per service key apricot does not

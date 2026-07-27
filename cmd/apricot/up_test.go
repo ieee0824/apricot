@@ -434,6 +434,30 @@ func TestBuildRunArgs_Ulimits_NotEmittedWhenUnset(t *testing.T) {
 	assertNotContains(t, args, "--ulimit")
 }
 
+func TestBuildRunArgs_CapAddCapDrop_Emitted(t *testing.T) {
+	// apple container (v0.12.0+) supports --cap-add / --cap-drop. Both prefixed
+	// (CAP_NET_RAW) and unprefixed (NET_RAW) names are accepted, so values are
+	// passed through unmodified.
+	svc := compose.Service{
+		Image:   "myapp",
+		CapAdd:  []interface{}{"SYS_PTRACE", "CAP_NET_ADMIN"},
+		CapDrop: []interface{}{"NET_RAW"},
+	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "--cap-add", "SYS_PTRACE")
+	assertContainsSequence(t, args, "--cap-add", "CAP_NET_ADMIN")
+	assertContainsSequence(t, args, "--cap-drop", "NET_RAW")
+}
+
+func TestBuildRunArgs_CapAddCapDrop_NotEmittedWhenUnset(t *testing.T) {
+	svc := compose.Service{Image: "myapp"}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertNotContains(t, args, "--cap-add")
+	assertNotContains(t, args, "--cap-drop")
+}
+
 func TestBuildRunArgs_EntrypointExecForm(t *testing.T) {
 	// Exec-form entrypoint: only the first element is the --entrypoint; the rest
 	// must be preserved as container args after the image.

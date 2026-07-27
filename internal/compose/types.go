@@ -43,7 +43,9 @@ type Service struct {
 	DNSSearch     interface{}  `yaml:"dns_search"` // string or []string
 	DNSOpt        interface{}  `yaml:"dns_opt"`    // string or []string
 	Init          bool         `yaml:"init"`
-	Ulimits       interface{}  `yaml:"ulimits"` // map[string]int or map[string]{soft,hard}
+	Ulimits       interface{}  `yaml:"ulimits"`  // map[string]int or map[string]{soft,hard}
+	CapAdd        interface{}  `yaml:"cap_add"`  // string or []string
+	CapDrop       interface{}  `yaml:"cap_drop"` // string or []string
 	Restart       string       `yaml:"restart"`
 	Platform      string       `yaml:"platform"`
 	Healthcheck   *Healthcheck `yaml:"healthcheck"`
