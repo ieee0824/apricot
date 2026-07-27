@@ -407,6 +407,35 @@ func TestCommandArgv(t *testing.T) {
 	}
 }
 
+func TestExists(t *testing.T) {
+	cases := []struct {
+		name     string
+		call     func() bool
+		exitCode int
+		want     bool
+		wantArgv []string
+	}{
+		{"NetworkExists existing", func() bool { return NetworkExists("net") }, 0, true, []string{"container", "network", "inspect", "net"}},
+		{"NetworkExists missing", func() bool { return NetworkExists("net") }, 1, false, []string{"container", "network", "inspect", "net"}},
+		{"VolumeExists existing", func() bool { return VolumeExists("v") }, 0, true, []string{"container", "volume", "inspect", "v"}},
+		{"VolumeExists missing", func() bool { return VolumeExists("v") }, 1, false, []string{"container", "volume", "inspect", "v"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, recorded := fakeExecCommand("", tc.exitCode)
+			restore := withExecCommand(fake)
+			defer restore()
+
+			if got := tc.call(); got != tc.want {
+				t.Errorf("exists = %v, want %v", got, tc.want)
+			}
+			if !reflect.DeepEqual(*recorded, tc.wantArgv) {
+				t.Errorf("argv = %v, want %v", *recorded, tc.wantArgv)
+			}
+		})
+	}
+}
+
 // fakeExecCommandContext mirrors fakeExecCommand for the CommandContext variant
 // used by LogsFollow.
 func fakeExecCommandContext(stdout string) func(context.Context, string, ...string) *exec.Cmd {
