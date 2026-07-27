@@ -43,6 +43,7 @@ go build -o /usr/local/bin/apricot ./cmd/apricot/
 ```bash
 apricot up                        # フォアグラウンドで起動
 apricot up -d                     # バックグラウンドで起動
+apricot up --build                # build: サービスを強制再ビルド
 apricot up --scale web=3          # web を3インスタンス起動
 apricot up --scale web=3 --scale db=2  # 複数サービスをスケール
 apricot up -f path/to/docker-compose.yaml  # ファイルを指定
@@ -50,6 +51,8 @@ apricot up -p myproject                    # プロジェクト名を指定
 ```
 
 `--scale` を指定したサービスのコンテナ名は `<project>-<service>-<index>` 形式になります（例: `myapp-web-1`, `myapp-web-2`）。
+
+`build:` のあるサービスは、イメージがまだ存在しないときだけビルドされます（docker-compose と同じ挙動）。強制的に再ビルドするには `--build` を付けるか、`apricot build` を使ってください。
 
 ### build
 

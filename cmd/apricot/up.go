@@ -91,6 +91,7 @@ func validateScaleTargets(scale scaleMap, services map[string]compose.Service) [
 func runUp(args []string) {
 	fs := flag.NewFlagSet("up", flag.ExitOnError)
 	detach := fs.Bool("d", false, "Run containers in background")
+	forceBuild := fs.Bool("build", false, "Build images before starting containers even if they already exist")
 	file := fs.String("f", "docker-compose.yaml", "Path to docker-compose.yaml")
 	project := fs.String("p", "", "Project name (default: current directory name)")
 	scale := make(scaleMap)
@@ -249,19 +250,23 @@ func runUp(args []string) {
 			if imageName == "" {
 				imageName = projectName + "_" + name
 			}
-			fmt.Printf("Building %s\n", imageName)
-			cleanupCtx := prepareFilteredContext(bc)
-			buildArgs, err := buildImageArgs(imageName, bc)
-			if err != nil {
+			// Match docker-compose: build only when the image is missing;
+			// --build forces a rebuild.
+			if *forceBuild || !runner.ImageExists(imageName) {
+				fmt.Printf("Building %s\n", imageName)
+				cleanupCtx := prepareFilteredContext(bc)
+				buildArgs, err := buildImageArgs(imageName, bc)
+				if err != nil {
+					cleanupCtx()
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
+				err = runner.Build(buildArgs)
 				cleanupCtx()
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				os.Exit(1)
-			}
-			err = runner.Build(buildArgs)
-			cleanupCtx()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
-				os.Exit(1)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
+					os.Exit(1)
+				}
 			}
 			if svc.Image == "" {
 				svc.Image = imageName

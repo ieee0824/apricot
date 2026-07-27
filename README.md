@@ -44,6 +44,7 @@ Start services.
 ```bash
 apricot up                        # foreground
 apricot up -d                     # background
+apricot up --build                # force rebuild of build: services
 apricot up --scale web=3          # start 3 instances of web
 apricot up --scale web=3 --scale db=2  # scale multiple services
 apricot up -f path/to/docker-compose.yaml  # specify file
@@ -51,6 +52,8 @@ apricot up -p myproject                    # specify project name
 ```
 
 Scaled containers are named `<project>-<service>-<index>` (e.g. `myapp-web-1`, `myapp-web-2`).
+
+Services with `build:` are built only when their image does not exist yet (same as docker-compose); pass `--build` to force a rebuild, or use `apricot build`.
 
 ### build
 

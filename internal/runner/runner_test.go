@@ -415,6 +415,8 @@ func TestExists(t *testing.T) {
 		want     bool
 		wantArgv []string
 	}{
+		{"ImageExists existing", func() bool { return ImageExists("img") }, 0, true, []string{"container", "image", "inspect", "img"}},
+		{"ImageExists missing", func() bool { return ImageExists("img") }, 1, false, []string{"container", "image", "inspect", "img"}},
 		{"NetworkExists existing", func() bool { return NetworkExists("net") }, 0, true, []string{"container", "network", "inspect", "net"}},
 		{"NetworkExists missing", func() bool { return NetworkExists("net") }, 1, false, []string{"container", "network", "inspect", "net"}},
 		{"VolumeExists existing", func() bool { return VolumeExists("v") }, 0, true, []string{"container", "volume", "inspect", "v"}},
