@@ -411,14 +411,24 @@ func TestBuildRunArgs_DNSOpt(t *testing.T) {
 	assertContainsSequence(t, args, "--dns-option", "ndots:2")
 }
 
-func TestBuildRunArgs_Ulimits_NotEmitted(t *testing.T) {
-	// apple container has no --ulimit flag, so it must not be generated.
+func TestBuildRunArgs_Ulimits_Emitted(t *testing.T) {
+	// apple container (v1.1.0+) supports --ulimit (format: <type>=<soft>[:<hard>]).
 	svc := compose.Service{
 		Image: "myapp",
 		Ulimits: map[string]interface{}{
 			"nofile": map[string]interface{}{"soft": 1024, "hard": 2048},
+			"nproc":  512,
 		},
 	}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	// Map iteration order is non-deterministic, so check each pair independently.
+	assertContainsSequence(t, args, "--ulimit", "nofile=1024:2048")
+	assertContainsSequence(t, args, "--ulimit", "nproc=512")
+}
+
+func TestBuildRunArgs_Ulimits_NotEmittedWhenUnset(t *testing.T) {
+	svc := compose.Service{Image: "myapp"}
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertNotContains(t, args, "--ulimit")
