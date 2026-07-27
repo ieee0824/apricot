@@ -382,9 +382,16 @@ func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
 	}
 }
 
-func TestBuildRunArgs_Init_NotEmitted(t *testing.T) {
-	// apple container has no --init flag, so it must not be generated.
+func TestBuildRunArgs_Init_Emitted(t *testing.T) {
+	// apple container (v1.1.0+) supports --init, so init: true maps to it.
 	svc := compose.Service{Image: "myapp", Init: true}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContains(t, args, "--init")
+}
+
+func TestBuildRunArgs_Init_NotEmittedWhenUnset(t *testing.T) {
+	svc := compose.Service{Image: "myapp"}
 	cf := &compose.ComposeFile{}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertNotContains(t, args, "--init")

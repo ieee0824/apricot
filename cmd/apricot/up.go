@@ -451,6 +451,11 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "--read-only")
 	}
 
+	// Init process (signal forwarding / zombie reaping)
+	if svc.Init {
+		args = append(args, "--init")
+	}
+
 	// tmpfs
 	for _, t := range compose.ToStringSlice(svc.Tmpfs) {
 		args = append(args, "--tmpfs", t)
