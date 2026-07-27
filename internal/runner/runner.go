@@ -94,9 +94,10 @@ func Run(args []string, detach bool) error {
 	cmd := execCommand("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if !detach {
-		cmd.Stdin = os.Stdin
-	}
+	// Stdin is passed through even when detached: `container run -t -i`
+	// configures the calling terminal and fails with ENODEV when stdin is
+	// /dev/null, even with -d.
+	cmd.Stdin = os.Stdin
 	return cmd.Run()
 }
 
@@ -204,6 +205,15 @@ func NetworkCreate(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// ContainerExists reports whether the named container exists (in any state),
+// based on the exit status of `container inspect`.
+func ContainerExists(name string) bool {
+	cmd := execCommand("container", "inspect", name)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
 }
 
 // ImageExists reports whether the named image exists in the local store,
