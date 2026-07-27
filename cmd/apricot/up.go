@@ -456,6 +456,11 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "--init")
 	}
 
+	// Resource limits (ulimits)
+	for _, u := range compose.ToUlimitSlice(svc.Ulimits) {
+		args = append(args, "--ulimit", u)
+	}
+
 	// tmpfs
 	for _, t := range compose.ToStringSlice(svc.Tmpfs) {
 		args = append(args, "--tmpfs", t)

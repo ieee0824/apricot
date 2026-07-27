@@ -76,11 +76,11 @@ var handledServiceKeys = map[string]bool{
 	"cpus": true, "mem_limit": true, "stdin_open": true, "tty": true,
 	"depends_on": true, "container_name": true, "read_only": true,
 	"tmpfs": true, "dns": true, "dns_search": true, "dns_opt": true,
-	"platform": true, "healthcheck": true, "init": true,
+	"platform": true, "healthcheck": true, "init": true, "ulimits": true,
 }
 
 // unsupportedKeyWarnings returns one warning per service key apricot does not
-// handle (e.g. deploy, restart, ulimits). Output is sorted
+// handle (e.g. deploy, restart, stop_signal). Output is sorted
 // for stable, testable results.
 func unsupportedKeyWarnings(expanded string) []string {
 	var raw struct {
