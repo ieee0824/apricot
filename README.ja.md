@@ -140,7 +140,7 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 | `dns` | ✅ |
 | `dns_search` | ✅ |
 | `dns_opt` | ✅ |
-| `init` | ❌ (Apple Container 非対応) |
+| `init` | ✅ (`container run --init` にマッピング) |
 | `ulimits` | ❌ (Apple Container 非対応) |
 | `depends_on` | ✅ (起動順序 + `condition: service_healthy`) |
 | `healthcheck` | ✅ (`service_healthy` 待ちに使用) |
@@ -150,6 +150,7 @@ apricot exec -w /app web pwd    # 作業ディレクトリ指定
 ## 制限事項
 
 - **networks**: デフォルト以外のネットワーク設定には macOS 26 以降が必要です（Apple Container ランタイムの制限）。macOS 26 未満では `networks` 設定は警告を出して自動的にスキップされます。
-- **init / ulimits**: Apple Container CLI には `--init` / `--ulimit` オプションが無いため、これらの設定は（警告を出した上で）無視されます。
+- **init**: `init: true` は `container run --init` として渡され、シグナル転送とゾンビプロセスの刈り取りを行う init プロセスが起動します（Apple Container v1.1.0 以降）。
+- **ulimits**: Apple Container CLI には `--ulimit` オプションが無いため、この設定は（警告を出した上で）無視されます。
 - **healthcheck**: Apple Container はネイティブの healthcheck を持たないため、apricot が `test` コマンドを `container exec` でコンテナ内実行して判定します（`interval` / `timeout` / `retries` / `start_period` を尊重）。`depends_on: { x: { condition: service_healthy } }` を満たすために使われ、依存先が healthy になるまで `up` が待機します。`condition: service_completed_successfully` は未対応です。
 - **未対応キー**: apricot が扱わないサービスキー（`deploy` / `restart` / `extends` / `profiles` など）は、compose ファイル読み込み時に警告を出します（無言で破棄しません）。

@@ -681,10 +681,13 @@ services:
   db:
     image: postgres
     init: true
+    stop_signal: SIGTERM
 `
 	got := unsupportedKeyWarnings(yaml)
+	// init is handled (maps to container run --init), so it must not warn;
+	// stop_signal is still unsupported and must.
 	want := []string{
-		`service "db": "init" is not supported by apricot and will be ignored`,
+		`service "db": "stop_signal" is not supported by apricot and will be ignored`,
 		`service "web": "deploy" is not supported by apricot and will be ignored`,
 		`service "web": "restart" is not supported by apricot and will be ignored`,
 	}
