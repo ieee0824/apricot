@@ -467,6 +467,15 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "--ulimit", u)
 	}
 
+	// Linux capabilities. The container CLI accepts both prefixed (CAP_NET_RAW)
+	// and unprefixed (NET_RAW) names, so values are passed through as-is.
+	for _, c := range compose.ToStringSlice(svc.CapAdd) {
+		args = append(args, "--cap-add", c)
+	}
+	for _, c := range compose.ToStringSlice(svc.CapDrop) {
+		args = append(args, "--cap-drop", c)
+	}
+
 	// tmpfs
 	for _, t := range compose.ToStringSlice(svc.Tmpfs) {
 		args = append(args, "--tmpfs", t)
