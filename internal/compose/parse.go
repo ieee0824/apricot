@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	shellwords "github.com/mattn/go-shellwords"
 	"gopkg.in/yaml.v3"
 )
 
@@ -113,6 +114,24 @@ func unsupportedKeyWarnings(expanded string) []string {
 }
 
 // ToStringSlice converts an interface{} that is either a string or []interface{} to []string.
+// ToCommandSlice converts a compose command/entrypoint value to an argv
+// slice. List form (exec form) is taken as-is; string form is split into
+// words following POSIX shell quoting rules, matching docker-compose's shlex
+// behavior (`command: sleep infinity` runs ["sleep", "infinity"], not a
+// single "sleep infinity" executable). A malformed string (e.g. unbalanced
+// quotes) is passed through as a single argument with a warning.
+func ToCommandSlice(v interface{}) []string {
+	if s, ok := v.(string); ok {
+		parts, err := shellwords.Parse(s)
+		if err != nil {
+			warnf("could not split command %q (%v); passing it as a single argument", s, err)
+			return []string{s}
+		}
+		return parts
+	}
+	return ToStringSlice(v)
+}
+
 func ToStringSlice(v interface{}) []string {
 	if v == nil {
 		return nil

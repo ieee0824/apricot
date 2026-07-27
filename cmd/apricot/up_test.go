@@ -434,6 +434,20 @@ func TestBuildRunArgs_Ulimits_NotEmittedWhenUnset(t *testing.T) {
 	assertNotContains(t, args, "--ulimit")
 }
 
+func TestRemoveFirstArg(t *testing.T) {
+	// Only the first occurrence (the flag) is removed; a same-looking value
+	// later in the container command survives.
+	args := []string{"--name", "c", "-t", "-i", "myimg", "grep", "-i", "foo"}
+	got := removeFirstArg(args, "-i")
+	want := []string{"--name", "c", "-t", "myimg", "grep", "-i", "foo"}
+	if !slices.Equal(got, want) {
+		t.Errorf("removeFirstArg = %v, want %v", got, want)
+	}
+	if got := removeFirstArg([]string{"-t"}, "-i"); !slices.Equal(got, []string{"-t"}) {
+		t.Errorf("removeFirstArg without match = %v, want unchanged", got)
+	}
+}
+
 func TestBuildRunArgs_CapAddCapDrop_Emitted(t *testing.T) {
 	// apple container (v0.12.0+) supports --cap-add / --cap-drop. Both prefixed
 	// (CAP_NET_RAW) and unprefixed (NET_RAW) names are accepted, so values are
@@ -456,6 +470,16 @@ func TestBuildRunArgs_CapAddCapDrop_NotEmittedWhenUnset(t *testing.T) {
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 	assertNotContains(t, args, "--cap-add")
 	assertNotContains(t, args, "--cap-drop")
+}
+
+func TestBuildRunArgs_StringCommandIsShellSplit(t *testing.T) {
+	// docker-compose splits string-form command with shlex; "sleep infinity"
+	// must become two argv elements, not one "sleep infinity" executable.
+	svc := compose.Service{Image: "myapp", Command: "sleep infinity"}
+	cf := &compose.ComposeFile{}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "sleep", "infinity")
+	assertNotContains(t, args, "sleep infinity")
 }
 
 func TestBuildRunArgs_EntrypointExecForm(t *testing.T) {

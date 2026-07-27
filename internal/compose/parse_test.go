@@ -40,6 +40,29 @@ func TestToStringSlice(t *testing.T) {
 	}
 }
 
+func TestToCommandSlice(t *testing.T) {
+	tests := []struct {
+		name string
+		in   interface{}
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"string is shell-split", "sleep infinity", []string{"sleep", "infinity"}},
+		{"single quotes", "sh -c 'echo hi && sleep 1'", []string{"sh", "-c", "echo hi && sleep 1"}},
+		{"double quotes", `echo "hello world"`, []string{"echo", "hello world"}},
+		{"exec form is untouched", []interface{}{"sh", "-c", "echo hi"}, []string{"sh", "-c", "echo hi"}},
+		{"malformed string passes through whole", "sh -c 'unbalanced", []string{"sh -c 'unbalanced"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ToCommandSlice(tt.in)
+			if !stringSliceEqual(got, tt.want) {
+				t.Errorf("ToCommandSlice(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestToEnvSlice(t *testing.T) {
 	tests := []struct {
 		name string

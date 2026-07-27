@@ -285,11 +285,13 @@ func runUp(args []string) {
 			} else {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
-			if err := runner.StopQuiet(containerName); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
-			}
-			if err := runner.DeleteQuiet(containerName); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
+			if runner.ContainerExists(containerName) {
+				if err := runner.StopQuiet(containerName); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
+				}
+				if err := runner.DeleteQuiet(containerName); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
+				}
 			}
 
 			if err := ensureBindMountDirs(compose.ToVolumeList(svc.Volumes), composeDir); err != nil {
@@ -298,6 +300,14 @@ func runUp(args []string) {
 			}
 
 			runArgs := buildRunArgs(containerName, name, projectName, composeDir, svc, cf)
+
+			// `container run -t -i` configures the calling terminal and fails
+			// with ENODEV when stdin is not one, even detached — so without a
+			// terminal, stdin_open is dropped instead of failing the start.
+			if svc.Tty && svc.StdinOpen && !stdinIsTerminal() {
+				runArgs = removeFirstArg(runArgs, "-i")
+				fmt.Fprintf(os.Stderr, "Warning: service %q: stdin_open is ignored because stdin is not a terminal (container run -t -i requires one)\n", name)
+			}
 
 			fmt.Printf("Starting %s\n", containerName)
 			// Always start detached; foreground mode streams logs below
@@ -508,7 +518,7 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	// Entrypoint: apple container's --entrypoint takes a single command, so for
 	// exec-form entrypoints (["sh", "-c", ...]) only the first element is the
 	// entrypoint; the rest are passed as container arguments below.
-	entrypointParts := compose.ToStringSlice(svc.Entrypoint)
+	entrypointParts := compose.ToCommandSlice(svc.Entrypoint)
 	if len(entrypointParts) > 0 {
 		args = append(args, "--entrypoint", entrypointParts[0])
 	}
@@ -521,8 +531,20 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	if len(entrypointParts) > 1 {
 		args = append(args, entrypointParts[1:]...)
 	}
-	args = append(args, compose.ToStringSlice(svc.Command)...)
+	args = append(args, compose.ToCommandSlice(svc.Command)...)
 
+	return args
+}
+
+// removeFirstArg returns args without the first occurrence of flag. Flags
+// precede the image name and command, so matching the first occurrence never
+// touches a same-looking value inside the container command.
+func removeFirstArg(args []string, flag string) []string {
+	for i, a := range args {
+		if a == flag {
+			return append(args[:i:i], args[i+1:]...)
+		}
+	}
 	return args
 }
 
