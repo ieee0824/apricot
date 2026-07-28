@@ -407,6 +407,41 @@ func TestCommandArgv(t *testing.T) {
 	}
 }
 
+func TestVolumeInitFromImage(t *testing.T) {
+	fake, recorded := fakeExecCommand("", 0)
+	restore := withExecCommand(fake)
+	defer restore()
+
+	if err := VolumeInitFromImage("p_data", "/var/lib/data", "myimg"); err != nil {
+		t.Fatalf("VolumeInitFromImage: %v", err)
+	}
+	argv := *recorded
+	wantPrefix := []string{"container", "run", "--rm", "-u", "0:0", "--entrypoint", "/bin/sh", "-v", "p_data:/.apricot-volume-init", "myimg", "-c"}
+	if len(argv) != len(wantPrefix)+1 {
+		t.Fatalf("argv = %v, want %d elements", argv, len(wantPrefix)+1)
+	}
+	for i, w := range wantPrefix {
+		if argv[i] != w {
+			t.Errorf("argv[%d] = %q, want %q", i, argv[i], w)
+		}
+	}
+	script := argv[len(argv)-1]
+	for _, must := range []string{"'/var/lib/data'", "chown", "chmod", "cp -a"} {
+		if !strings.Contains(script, must) {
+			t.Errorf("script missing %q:\n%s", must, script)
+		}
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	if got := shellQuote("/plain/path"); got != "'/plain/path'" {
+		t.Errorf("shellQuote plain = %q", got)
+	}
+	if got := shellQuote("a'b"); got != `'a'"'"'b'` {
+		t.Errorf("shellQuote quote = %q", got)
+	}
+}
+
 func TestExists(t *testing.T) {
 	cases := []struct {
 		name     string

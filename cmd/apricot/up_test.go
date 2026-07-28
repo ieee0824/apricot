@@ -434,6 +434,59 @@ func TestBuildRunArgs_Ulimits_NotEmittedWhenUnset(t *testing.T) {
 	assertNotContains(t, args, "--ulimit")
 }
 
+func TestPrefixNamedVolume(t *testing.T) {
+	cf := &compose.ComposeFile{Volumes: map[string]compose.Volume{"data": {}, "cache": {}}}
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"declared named volume", "data:/var/lib/data", "p_data:/var/lib/data"},
+		{"declared with ro flag", "cache:/cache:ro", "p_cache:/cache:ro"},
+		{"undeclared named volume", "other:/data", "other:/data"},
+		{"absolute bind mount", "/host/path:/data", "/host/path:/data"},
+		{"relative bind mount", "./src:/app", "./src:/app"},
+		{"home bind mount", "~/src:/app", "~/src:/app"},
+		{"target only", "/anonymous", "/anonymous"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := prefixNamedVolume(tt.in, "p", cf); got != tt.want {
+				t.Errorf("prefixNamedVolume(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildRunArgs_NamedVolumeIsProjectScoped(t *testing.T) {
+	// The -v source must match the <project>_<name> volume that `up` creates
+	// and `down -v` deletes; unprefixed names would make `container run`
+	// auto-create a volume shared across projects.
+	cf := &compose.ComposeFile{Volumes: map[string]compose.Volume{"data": {}}}
+	svc := compose.Service{Image: "myapp", Volumes: []interface{}{"data:/data", "/host:/bind"}}
+	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
+	assertContainsSequence(t, args, "-v", "p_data:/data")
+	assertContainsSequence(t, args, "-v", "/host:/bind")
+}
+
+func TestNamedVolumeMounts(t *testing.T) {
+	cf := &compose.ComposeFile{Volumes: map[string]compose.Volume{"data": {}, "cache": {}}}
+	svc := compose.Service{
+		Image:   "myapp",
+		Volumes: []interface{}{"data:/var/lib/data", "cache:/cache:ro", "undeclared:/x", "/host:/bind", ".:/app"},
+	}
+	got := namedVolumeMounts(svc, "p", "/proj", cf)
+	want := [][2]string{{"p_data", "/var/lib/data"}, {"p_cache", "/cache"}}
+	if len(got) != len(want) {
+		t.Fatalf("namedVolumeMounts = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("mount[%d] = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
 func TestRemoveFirstArg(t *testing.T) {
 	// Only the first occurrence (the flag) is removed; a same-looking value
 	// later in the container command survives.

@@ -18,6 +18,11 @@ import (
 	"github.com/ieee0824/apricot/internal/runner"
 )
 
+// disableVolumeInitEnv, when set to a non-empty value, disables seeding of
+// newly created volumes from the service image (docker's copy-on-first-use
+// emulation) and leaves them as bare empty volumes.
+const disableVolumeInitEnv = "APRICOT_DISABLE_VOLUME_INIT"
+
 // supportsNetworks reports whether the current macOS version supports
 // non-default network configuration (requires macOS 26+).
 func supportsNetworks() bool {
@@ -147,7 +152,9 @@ func runUp(args []string) {
 		}
 	}
 
-	// Create volumes
+	// Create volumes. Newly created ones are remembered so they can be seeded
+	// from the service image on first mount (docker's copy-on-first-use).
+	createdVolumes := make(map[string]bool)
 	for name := range cf.Volumes {
 		volumeName := projectName + "_" + name
 		if runner.VolumeExists(volumeName) {
@@ -156,7 +163,9 @@ func runUp(args []string) {
 		fmt.Printf("Creating volume %s\n", volumeName)
 		if err := runner.VolumeCreate(volumeName); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: volume create failed for %s: %v\n", volumeName, err)
+			continue
 		}
+		createdVolumes[volumeName] = true
 	}
 
 	// Sort services by dependency order
@@ -299,6 +308,22 @@ func runUp(args []string) {
 				os.Exit(1)
 			}
 
+			// Seed volumes this run created from the service image before the
+			// first mount, mimicking docker's copy-on-first-use for named
+			// volumes (apple/container#729): without it a fresh volume is a
+			// root-owned empty directory that non-root users cannot write to.
+			if os.Getenv(disableVolumeInitEnv) == "" {
+				for _, m := range namedVolumeMounts(svc, projectName, composeDir, cf) {
+					if !createdVolumes[m[0]] {
+						continue
+					}
+					delete(createdVolumes, m[0])
+					if err := runner.VolumeInitFromImage(m[0], m[1], svc.Image); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to seed volume %s from image %s (needs /bin/sh): %v\n", m[0], svc.Image, err)
+					}
+				}
+			}
+
 			runArgs := buildRunArgs(containerName, name, projectName, composeDir, svc, cf)
 
 			// `container run -t -i` configures the calling terminal and fails
@@ -420,6 +445,7 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	// Volumes
 	for _, v := range compose.ToVolumeList(svc.Volumes) {
 		v = resolveVolumeHostPath(v, composeDir)
+		v = prefixNamedVolume(v, projectName, cf)
 		args = append(args, "-v", v)
 	}
 
@@ -534,6 +560,48 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	args = append(args, compose.ToCommandSlice(svc.Command)...)
 
 	return args
+}
+
+// prefixNamedVolume rewrites the source of a named-volume spec to the
+// project-scoped volume name (<project>_<name>), matching both what `up`
+// creates / `down -v` deletes and docker-compose's project scoping. Bind
+// mounts and names not declared under the top-level volumes: key are
+// returned unchanged.
+func prefixNamedVolume(spec, projectName string, cf *compose.ComposeFile) string {
+	parts := strings.SplitN(spec, ":", 2)
+	if len(parts) < 2 {
+		return spec
+	}
+	src := parts[0]
+	if strings.HasPrefix(src, "/") || strings.HasPrefix(src, ".") || strings.HasPrefix(src, "~") {
+		return spec
+	}
+	if _, declared := cf.Volumes[src]; !declared {
+		return spec
+	}
+	return projectName + "_" + spec
+}
+
+// namedVolumeMounts returns the project-scoped volume name and container
+// target of each declared named-volume spec used by svc.
+func namedVolumeMounts(svc compose.Service, projectName, composeDir string, cf *compose.ComposeFile) [][2]string {
+	var mounts [][2]string
+	for _, v := range compose.ToVolumeList(svc.Volumes) {
+		v = resolveVolumeHostPath(v, composeDir)
+		parts := strings.SplitN(v, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		src := parts[0]
+		if strings.HasPrefix(src, "/") || strings.HasPrefix(src, ".") || strings.HasPrefix(src, "~") {
+			continue
+		}
+		if _, declared := cf.Volumes[src]; !declared {
+			continue
+		}
+		mounts = append(mounts, [2]string{projectName + "_" + src, parts[1]})
+	}
+	return mounts
 }
 
 // removeFirstArg returns args without the first occurrence of flag. Flags
