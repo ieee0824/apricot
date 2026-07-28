@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // execCommand and execCommandContext are package-level indirections over the
@@ -249,6 +250,32 @@ func VolumeCreate(name string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// VolumeInitFromImage seeds a fresh volume with the contents, ownership and
+// mode of the image directory it is about to be mounted over, mimicking
+// docker's copy-on-first-use for named volumes. apple/container mounts a bare
+// volume as a root-owned empty directory (apple/container#729), which
+// non-root container users cannot write to. The image must provide /bin/sh;
+// callers treat failure as non-fatal.
+func VolumeInitFromImage(volume, target, image string) error {
+	script := fmt.Sprintf(`t=%s; d=/.apricot-volume-init
+if [ -d "$t" ]; then
+  chown "$(stat -c %%u:%%g "$t")" "$d"
+  chmod "$(stat -c %%a "$t")" "$d"
+  cp -a "$t/." "$d/" 2>/dev/null || true
+fi`, shellQuote(target))
+	cmd := execCommand("container", "run", "--rm", "-u", "0:0", "--entrypoint", "/bin/sh",
+		"-v", volume+":/.apricot-volume-init", image, "-c", script)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
+// shellQuote wraps s in single quotes for safe interpolation into a POSIX
+// shell command line.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // VolumeDelete deletes a volume.
