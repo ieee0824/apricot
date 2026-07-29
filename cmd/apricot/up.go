@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,11 @@ import (
 // newly created volumes from the service image (docker's copy-on-first-use
 // emulation) and leaves them as bare empty volumes.
 const disableVolumeInitEnv = "APRICOT_DISABLE_VOLUME_INIT"
+
+// disableHostsInjectEnv, when set to a non-empty value, disables appending
+// service-name entries to each container's /etc/hosts (docker-compose-style
+// service discovery emulation).
+const disableHostsInjectEnv = "APRICOT_DISABLE_HOSTS_INJECT"
 
 // supportsNetworks reports whether the current macOS version supports
 // non-default network configuration (requires macOS 26+).
@@ -215,6 +221,9 @@ func runUp(args []string) {
 	}
 	var started []startedContainer
 
+	// Containers already made resolvable by name via /etc/hosts injection.
+	var hostsRecords []hostsRecord
+
 	// Pre-compute normalized healthchecks per service for service_healthy waits.
 	healthSpecs := map[string]compose.HealthcheckSpec{}
 	for sname, s := range cf.Services {
@@ -341,6 +350,20 @@ func runUp(args []string) {
 				os.Exit(1)
 			}
 			started = append(started, startedContainer{name: containerName, service: name})
+
+			// apple/container has no container-to-container DNS on its networks
+			// (apple/container#1809), so emulate docker-compose service discovery
+			// by cross-injecting name entries into every container's /etc/hosts.
+			if os.Getenv(disableHostsInjectEnv) == "" {
+				ips, err := runner.ContainerIPs(containerName)
+				if err != nil || len(ips) == 0 {
+					fmt.Fprintf(os.Stderr, "Warning: could not determine IP of %s; peers will not resolve it by name: %v\n", containerName, err)
+					continue
+				}
+				rec := hostsRecord{container: containerName, aliases: hostsAliases(name, containerName, i, scaled), ips: ips}
+				injectServiceHosts(hostsRecords, rec)
+				hostsRecords = append(hostsRecords, rec)
+			}
 		}
 	}
 
@@ -820,6 +843,70 @@ func validateServiceNetworks(cf *compose.ComposeFile) error {
 		}
 	}
 	return nil
+}
+
+// hostsRecord tracks a started container's names and per-network IPv4
+// addresses for cross-container /etc/hosts injection.
+type hostsRecord struct {
+	container string
+	aliases   []string          // names peers use to reach this container
+	ips       map[string]string // network name -> IPv4 address
+}
+
+// hostsAliases returns the names under which a container should be resolvable
+// by its peers: the service name plus the container name. Scaled replicas
+// beyond the first get only their container name, so the bare service name
+// deterministically points at the first replica.
+func hostsAliases(serviceName, containerName string, instance int, scaled bool) []string {
+	if scaled && instance > 1 {
+		return []string{containerName}
+	}
+	if containerName == serviceName {
+		return []string{serviceName}
+	}
+	return []string{serviceName, containerName}
+}
+
+// hostsLine returns the /etc/hosts line that makes src resolvable from dst:
+// src's IPv4 address on a network both containers are attached to, followed by
+// src's aliases. Returns "" when the two containers share no network, matching
+// docker-compose, where services on disjoint networks do not resolve each other.
+func hostsLine(src, dst hostsRecord) string {
+	nets := make([]string, 0, len(src.ips))
+	for n := range src.ips {
+		nets = append(nets, n)
+	}
+	sort.Strings(nets)
+	for _, n := range nets {
+		if _, ok := dst.ips[n]; ok {
+			return src.ips[n] + " " + strings.Join(src.aliases, " ")
+		}
+	}
+	return ""
+}
+
+// injectServiceHosts makes rec and the previously started containers
+// resolvable from each other by appending entries to their /etc/hosts files.
+// Dependencies start first (SortServices), so by the time a service starts,
+// everything it depends_on is already resolvable inside it. Failures are
+// non-fatal: connectivity by IP still works, only name resolution is lost.
+func injectServiceHosts(prev []hostsRecord, rec hostsRecord) {
+	lines := make([]string, 0, len(prev)+1)
+	for _, p := range prev {
+		if line := hostsLine(p, rec); line != "" {
+			lines = append(lines, line)
+		}
+		if line := hostsLine(rec, p); line != "" {
+			if err := runner.AppendHosts(p.container, []string{line}); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to update /etc/hosts in %s (needs /bin/sh and a writable /etc/hosts): %v\n", p.container, err)
+			}
+		}
+	}
+	// Self entry so a service resolves its own service name, like docker-compose.
+	lines = append(lines, hostsLine(rec, rec))
+	if err := runner.AppendHosts(rec.container, lines); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to update /etc/hosts in %s (needs /bin/sh and a writable /etc/hosts): %v\n", rec.container, err)
+	}
 }
 
 // buildNetworkCreateArgs returns the args for `container network create` (options + name).
