@@ -616,32 +616,40 @@ func TestContainerIPs(t *testing.T) {
 	})
 }
 
-func TestAppendHosts(t *testing.T) {
-	t.Run("appends quoted lines via sh as root", func(t *testing.T) {
+func TestReplaceHosts(t *testing.T) {
+	t.Run("removes stale entries by marker and alias suffix, then appends", func(t *testing.T) {
 		fake, recorded := fakeExecCommand("", 0)
 		restore := withExecCommand(fake)
 		defer restore()
 
-		err := AppendHosts("myapp-web", []string{"192.168.66.5 db myapp-db", "192.168.66.6 cache"})
+		err := ReplaceHosts("myapp-web", []HostsEntry{
+			{Line: "192.168.66.5 db myapp-db", Marker: "myapp-db"},
+			{Line: "192.168.66.6 cache", Marker: "myapp-cache"},
+		})
 		if err != nil {
-			t.Fatalf("AppendHosts: %v", err)
+			t.Fatalf("ReplaceHosts: %v", err)
 		}
-		want := []string{
-			"container", "exec", "-u", "0", "myapp-web", "/bin/sh", "-c",
-			`printf '%s\n' '192.168.66.5 db myapp-db' '192.168.66.6 cache' >> /etc/hosts`,
-		}
+		wantScript := `h=$(grep -v ` +
+			`-e ' db myapp-db$' -e ' # apricot:myapp-db$' ` +
+			`-e ' cache$' -e ' # apricot:myapp-cache$' ` +
+			`/etc/hosts); ` +
+			`printf '%s\n' "$h" ` +
+			`'192.168.66.5 db myapp-db # apricot:myapp-db' ` +
+			`'192.168.66.6 cache # apricot:myapp-cache' ` +
+			`> /etc/hosts`
+		want := []string{"container", "exec", "-u", "0", "myapp-web", "/bin/sh", "-c", wantScript}
 		if !reflect.DeepEqual(*recorded, want) {
-			t.Errorf("args = %v, want %v", *recorded, want)
+			t.Errorf("args = %#v, want %#v", *recorded, want)
 		}
 	})
 
-	t.Run("no-op for empty lines", func(t *testing.T) {
+	t.Run("no-op for empty entries", func(t *testing.T) {
 		fake, recorded := fakeExecCommand("", 0)
 		restore := withExecCommand(fake)
 		defer restore()
 
-		if err := AppendHosts("myapp-web", nil); err != nil {
-			t.Fatalf("AppendHosts: %v", err)
+		if err := ReplaceHosts("myapp-web", nil); err != nil {
+			t.Fatalf("ReplaceHosts: %v", err)
 		}
 		if len(*recorded) != 0 {
 			t.Errorf("expected no exec, got %v", *recorded)

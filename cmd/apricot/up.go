@@ -222,7 +222,14 @@ func runUp(args []string) {
 	var started []startedContainer
 
 	// Containers already made resolvable by name via /etc/hosts injection.
+	// Seeded from the project's already running containers so that services
+	// not restarted by this run (e.g. `up <service>`) both keep receiving
+	// fresh entries and stay resolvable from recreated containers.
+	hostsInject := os.Getenv(disableHostsInjectEnv) == ""
 	var hostsRecords []hostsRecord
+	if hostsInject {
+		hostsRecords = liveHostsRecords(projectName, cf)
+	}
 
 	// Pre-compute normalized healthchecks per service for service_healthy waits.
 	healthSpecs := map[string]compose.HealthcheckSpec{}
@@ -310,6 +317,8 @@ func runUp(args []string) {
 				if err := runner.DeleteQuiet(containerName); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
 				}
+				// The recreated container gets a new IP; drop the stale record.
+				hostsRecords = removeHostsRecord(hostsRecords, containerName)
 			}
 
 			if err := ensureBindMountDirs(compose.ToVolumeList(svc.Volumes), composeDir); err != nil {
@@ -354,7 +363,7 @@ func runUp(args []string) {
 			// apple/container has no container-to-container DNS on its networks
 			// (apple/container#1809), so emulate docker-compose service discovery
 			// by cross-injecting name entries into every container's /etc/hosts.
-			if os.Getenv(disableHostsInjectEnv) == "" {
+			if hostsInject {
 				ips, err := runner.ContainerIPs(containerName)
 				if err != nil || len(ips) == 0 {
 					fmt.Fprintf(os.Stderr, "Warning: could not determine IP of %s; peers will not resolve it by name: %v\n", containerName, err)
@@ -885,28 +894,94 @@ func hostsLine(src, dst hostsRecord) string {
 	return ""
 }
 
-// injectServiceHosts makes rec and the previously started containers
-// resolvable from each other by appending entries to their /etc/hosts files.
+// hostsEntryFor returns the ReplaceHosts entry that makes src resolvable from
+// dst, keyed by src's container name so a later re-injection (after src is
+// recreated with a new IP) replaces the entry instead of shadowing it.
+func hostsEntryFor(src, dst hostsRecord) (runner.HostsEntry, bool) {
+	line := hostsLine(src, dst)
+	if line == "" {
+		return runner.HostsEntry{}, false
+	}
+	return runner.HostsEntry{Line: line, Marker: src.container}, true
+}
+
+// injectServiceHosts makes rec and the other project containers resolvable
+// from each other by installing entries in their /etc/hosts files.
 // Dependencies start first (SortServices), so by the time a service starts,
 // everything it depends_on is already resolvable inside it. Failures are
 // non-fatal: connectivity by IP still works, only name resolution is lost.
 func injectServiceHosts(prev []hostsRecord, rec hostsRecord) {
-	lines := make([]string, 0, len(prev)+1)
+	entries := make([]runner.HostsEntry, 0, len(prev)+1)
 	for _, p := range prev {
-		if line := hostsLine(p, rec); line != "" {
-			lines = append(lines, line)
+		if e, ok := hostsEntryFor(p, rec); ok {
+			entries = append(entries, e)
 		}
-		if line := hostsLine(rec, p); line != "" {
-			if err := runner.AppendHosts(p.container, []string{line}); err != nil {
+		if e, ok := hostsEntryFor(rec, p); ok {
+			if err := runner.ReplaceHosts(p.container, []runner.HostsEntry{e}); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update /etc/hosts in %s (needs /bin/sh and a writable /etc/hosts): %v\n", p.container, err)
 			}
 		}
 	}
 	// Self entry so a service resolves its own service name, like docker-compose.
-	lines = append(lines, hostsLine(rec, rec))
-	if err := runner.AppendHosts(rec.container, lines); err != nil {
+	if e, ok := hostsEntryFor(rec, rec); ok {
+		entries = append(entries, e)
+	}
+	if err := runner.ReplaceHosts(rec.container, entries); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to update /etc/hosts in %s (needs /bin/sh and a writable /etc/hosts): %v\n", rec.container, err)
 	}
+}
+
+// liveHostsRecords reconstructs hosts records for the project's already
+// running containers from their apricot labels, so a partial `up <service>`
+// keeps every container's entries in sync: containers not restarted by this
+// run receive the recreated services' new IPs, and recreated containers learn
+// the addresses of services that kept running.
+func liveHostsRecords(projectName string, cf *compose.ComposeFile) []hostsRecord {
+	containers, err := runner.List(false)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not list running containers for /etc/hosts injection: %v\n", err)
+		return nil
+	}
+	var recs []hostsRecord
+	for _, c := range containers {
+		if c.Labels["apricot.project"] != projectName || c.State != "running" {
+			continue
+		}
+		service := c.Labels["apricot.service"]
+		if service == "" {
+			continue
+		}
+		ips, err := runner.ContainerIPs(c.Name)
+		if err != nil || len(ips) == 0 {
+			continue
+		}
+		recs = append(recs, hostsRecord{container: c.Name, aliases: liveAliases(service, c.Name, projectName, cf), ips: ips})
+	}
+	return recs
+}
+
+// liveAliases mirrors hostsAliases for a container observed at runtime: the
+// bare service alias belongs to the service's single instance or its first
+// scaled replica; other replicas are reachable by container name only.
+func liveAliases(service, containerName, projectName string, cf *compose.ComposeFile) []string {
+	first := projectName + "-" + service
+	if svc, ok := cf.Services[service]; ok {
+		first = containerNameFor(projectName, service, svc.ContainerName)
+	}
+	if containerName == first || containerName == projectName+"-"+service+"-1" {
+		return hostsAliases(service, containerName, 1, false)
+	}
+	return []string{containerName}
+}
+
+// removeHostsRecord returns records without the entry for the named container.
+func removeHostsRecord(records []hostsRecord, containerName string) []hostsRecord {
+	for i, r := range records {
+		if r.container == containerName {
+			return append(records[:i:i], records[i+1:]...)
+		}
+	}
+	return records
 }
 
 // buildNetworkCreateArgs returns the args for `container network create` (options + name).
