@@ -558,3 +558,93 @@ func TestLogsFollow(t *testing.T) {
 		}
 	})
 }
+
+// realInspectJSON is a representative sample of `container inspect` output
+// from the apple container CLI (1.1.0): per-network IPv4 addresses are
+// reported in CIDR form under status.networks.
+const realInspectJSON = `[
+  {
+    "id": "myapp-web",
+    "status": {
+      "networks": [
+        {"network": "myapp_backend", "ipv4Address": "192.168.66.4/24", "ipv4Gateway": "192.168.66.1"},
+        {"network": "default", "ipv4Address": "192.168.64.9/24", "ipv4Gateway": "192.168.64.1"}
+      ],
+      "state": "running"
+    }
+  }
+]`
+
+func TestContainerIPs(t *testing.T) {
+	t.Run("parses per-network addresses without CIDR suffix", func(t *testing.T) {
+		fake, recorded := fakeExecCommand(realInspectJSON, 0)
+		restore := withExecCommand(fake)
+		defer restore()
+
+		got, err := ContainerIPs("myapp-web")
+		if err != nil {
+			t.Fatalf("ContainerIPs: %v", err)
+		}
+		want := map[string]string{"myapp_backend": "192.168.66.4", "default": "192.168.64.9"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("ContainerIPs = %v, want %v", got, want)
+		}
+		wantArgs := []string{"container", "inspect", "myapp-web"}
+		if !reflect.DeepEqual(*recorded, wantArgs) {
+			t.Errorf("args = %v, want %v", *recorded, wantArgs)
+		}
+	})
+
+	t.Run("errors when inspect fails", func(t *testing.T) {
+		fake, _ := fakeExecCommand("", 1)
+		restore := withExecCommand(fake)
+		defer restore()
+
+		if _, err := ContainerIPs("gone"); err == nil {
+			t.Error("expected error for failing inspect")
+		}
+	})
+
+	t.Run("errors on empty result array", func(t *testing.T) {
+		fake, _ := fakeExecCommand("[]", 0)
+		restore := withExecCommand(fake)
+		defer restore()
+
+		if _, err := ContainerIPs("gone"); err == nil {
+			t.Error("expected error for empty inspect output")
+		}
+	})
+}
+
+func TestAppendHosts(t *testing.T) {
+	t.Run("appends quoted lines via sh as root", func(t *testing.T) {
+		fake, recorded := fakeExecCommand("", 0)
+		restore := withExecCommand(fake)
+		defer restore()
+
+		err := AppendHosts("myapp-web", []string{"192.168.66.5 db myapp-db", "192.168.66.6 cache"})
+		if err != nil {
+			t.Fatalf("AppendHosts: %v", err)
+		}
+		want := []string{
+			"container", "exec", "-u", "0", "myapp-web", "/bin/sh", "-c",
+			`printf '%s\n' '192.168.66.5 db myapp-db' '192.168.66.6 cache' >> /etc/hosts`,
+		}
+		if !reflect.DeepEqual(*recorded, want) {
+			t.Errorf("args = %v, want %v", *recorded, want)
+		}
+	})
+
+	t.Run("no-op for empty lines", func(t *testing.T) {
+		fake, recorded := fakeExecCommand("", 0)
+		restore := withExecCommand(fake)
+		defer restore()
+
+		if err := AppendHosts("myapp-web", nil); err != nil {
+			t.Fatalf("AppendHosts: %v", err)
+		}
+		if len(*recorded) != 0 {
+			t.Errorf("expected no exec, got %v", *recorded)
+		}
+	})
+}

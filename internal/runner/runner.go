@@ -286,6 +286,56 @@ func VolumeDelete(name string) error {
 	return cmd.Run()
 }
 
+// ContainerIPs returns the container's IPv4 address (without the CIDR suffix)
+// per attached network, keyed by network name, from `container inspect`.
+func ContainerIPs(name string) (map[string]string, error) {
+	out, err := execCommand("container", "inspect", name).Output()
+	if err != nil {
+		return nil, fmt.Errorf("container inspect %s failed: %w", name, err)
+	}
+	var parsed []struct {
+		Status struct {
+			Networks []struct {
+				Network     string `json:"network"`
+				IPv4Address string `json:"ipv4Address"`
+			} `json:"networks"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(out, &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse container inspect output for %s: %w", name, err)
+	}
+	if len(parsed) == 0 {
+		return nil, fmt.Errorf("container inspect returned no entry for %s", name)
+	}
+	ips := make(map[string]string)
+	for _, n := range parsed[0].Status.Networks {
+		ip := strings.SplitN(n.IPv4Address, "/", 2)[0]
+		if n.Network != "" && ip != "" {
+			ips[n.Network] = ip
+		}
+	}
+	return ips, nil
+}
+
+// AppendHosts appends the given lines to /etc/hosts inside the named
+// container, running as root so the file is writable regardless of the
+// service's user. The image must provide /bin/sh; callers treat failure as
+// non-fatal.
+func AppendHosts(container string, lines []string) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	quoted := make([]string, len(lines))
+	for i, l := range lines {
+		quoted[i] = shellQuote(l)
+	}
+	script := "printf '%s\\n' " + strings.Join(quoted, " ") + " >> /etc/hosts"
+	cmd := execCommand("container", "exec", "-u", "0", container, "/bin/sh", "-c", script)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run()
+}
+
 // ExecCheck runs cmd inside the named container and returns nil only if it exits
 // zero. Output is discarded; it is used for health probing. The supplied context
 // bounds how long the probe may run.

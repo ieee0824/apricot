@@ -1058,3 +1058,67 @@ func assertContainsSequence(t *testing.T, args []string, flag, value string) {
 	}
 	t.Errorf("expected sequence [%q %q] in args %v", flag, value, args)
 }
+
+func TestHostsAliases(t *testing.T) {
+	tests := []struct {
+		name          string
+		service       string
+		container     string
+		instance      int
+		scaled        bool
+		want          []string
+	}{
+		{"unscaled service", "web", "myapp-web", 1, false, []string{"web", "myapp-web"}},
+		{"custom container_name equal to service", "web", "web", 1, false, []string{"web"}},
+		{"first scaled replica gets service alias", "web", "myapp-web-1", 1, true, []string{"web", "myapp-web-1"}},
+		{"later scaled replicas get container name only", "web", "myapp-web-2", 2, true, []string{"myapp-web-2"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := hostsAliases(tc.service, tc.container, tc.instance, tc.scaled)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("hostsAliases(%q, %q, %d, %v) = %v, want %v", tc.service, tc.container, tc.instance, tc.scaled, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHostsLine(t *testing.T) {
+	web := hostsRecord{
+		container: "myapp-web",
+		aliases:   []string{"web", "myapp-web"},
+		ips:       map[string]string{"myapp_backend": "192.168.66.4", "myapp_frontend": "192.168.67.4"},
+	}
+	db := hostsRecord{
+		container: "myapp-db",
+		aliases:   []string{"db", "myapp-db"},
+		ips:       map[string]string{"myapp_backend": "192.168.66.5"},
+	}
+	lonely := hostsRecord{
+		container: "myapp-batch",
+		aliases:   []string{"batch", "myapp-batch"},
+		ips:       map[string]string{"myapp_other": "192.168.68.2"},
+	}
+
+	t.Run("uses the shared network's address", func(t *testing.T) {
+		if got, want := hostsLine(web, db), "192.168.66.4 web myapp-web"; got != want {
+			t.Errorf("hostsLine(web, db) = %q, want %q", got, want)
+		}
+		if got, want := hostsLine(db, web), "192.168.66.5 db myapp-db"; got != want {
+			t.Errorf("hostsLine(db, web) = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("empty when no network is shared", func(t *testing.T) {
+		if got := hostsLine(web, lonely); got != "" {
+			t.Errorf("hostsLine(web, lonely) = %q, want empty", got)
+		}
+	})
+
+	t.Run("self entry resolves own service name", func(t *testing.T) {
+		got := hostsLine(db, db)
+		if got != "192.168.66.5 db myapp-db" {
+			t.Errorf("hostsLine(db, db) = %q", got)
+		}
+	})
+}
