@@ -317,24 +317,54 @@ func ContainerIPs(name string) (map[string]string, error) {
 	return ips, nil
 }
 
-// AppendHosts appends the given lines to /etc/hosts inside the named
-// container, running as root so the file is writable regardless of the
-// service's user. The image must provide /bin/sh; callers treat failure as
-// non-fatal.
-func AppendHosts(container string, lines []string) error {
-	if len(lines) == 0 {
+// HostsEntry is one apricot-managed /etc/hosts line for ReplaceHosts.
+type HostsEntry struct {
+	// Line is the entry without the marker, e.g. "192.168.66.4 web myapp-web".
+	Line string
+	// Marker identifies the entry across updates (the container name). The
+	// written line gets a trailing "# apricot:<marker>" comment, and any
+	// existing line carrying the same marker is removed before appending, so
+	// re-injecting after an IP change replaces the stale entry instead of
+	// shadowing the new one (resolvers use the first matching line).
+	Marker string
+}
+
+// ReplaceHosts idempotently installs the given entries in /etc/hosts inside
+// the named container: existing lines with the same marker — or, for entries
+// written by apricot <= v1.3.0, the same unmarked alias suffix — are removed,
+// then the entries are appended. Runs as root so the file is writable
+// regardless of the service's user. The image must provide /bin/sh; callers
+// treat failure as non-fatal. The file is rewritten in place via truncation
+// (not rename) so a mount-point /etc/hosts works too.
+func ReplaceHosts(container string, entries []HostsEntry) error {
+	if len(entries) == 0 {
 		return nil
 	}
-	quoted := make([]string, len(lines))
-	for i, l := range lines {
-		quoted[i] = shellQuote(l)
+	var patterns, lines []string
+	for _, e := range entries {
+		if i := strings.IndexByte(e.Line, ' '); i >= 0 {
+			patterns = append(patterns, "-e "+shellQuote(regexpEscape(e.Line[i:])+"$"))
+		}
+		patterns = append(patterns, "-e "+shellQuote(regexpEscape(" # apricot:"+e.Marker)+"$"))
+		lines = append(lines, shellQuote(e.Line+" # apricot:"+e.Marker))
 	}
-	script := "printf '%s\\n' " + strings.Join(quoted, " ") + " >> /etc/hosts"
+	script := "h=$(grep -v " + strings.Join(patterns, " ") + " /etc/hosts); " +
+		"printf '%s\\n' \"$h\" " + strings.Join(lines, " ") + " > /etc/hosts"
 	cmd := execCommand("container", "exec", "-u", "0", container, "/bin/sh", "-c", script)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	return cmd.Run()
 }
+
+// regexpEscape escapes POSIX basic-regular-expression metacharacters so the
+// string matches literally in grep.
+func regexpEscape(s string) string {
+	return bREEscaper.Replace(s)
+}
+
+var bREEscaper = strings.NewReplacer(
+	`\`, `\\`, `.`, `\.`, `[`, `\[`, `]`, `\]`, `*`, `\*`, `^`, `\^`, `$`, `\$`,
+)
 
 // ExecCheck runs cmd inside the named container and returns nil only if it exits
 // zero. Output is discarded; it is used for health probing. The supplied context

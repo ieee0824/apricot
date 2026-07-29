@@ -1122,3 +1122,45 @@ func TestHostsLine(t *testing.T) {
 		}
 	})
 }
+
+func TestLiveAliases(t *testing.T) {
+	cf := &compose.ComposeFile{Services: map[string]compose.Service{
+		"web":   {},
+		"proxy": {ContainerName: "my-proxy"},
+	}}
+
+	tests := []struct {
+		name      string
+		service   string
+		container string
+		want      []string
+	}{
+		{"single instance", "web", "myapp-web", []string{"web", "myapp-web"}},
+		{"first scaled replica", "web", "myapp-web-1", []string{"web", "myapp-web-1"}},
+		{"later scaled replica", "web", "myapp-web-2", []string{"myapp-web-2"}},
+		{"custom container_name", "proxy", "my-proxy", []string{"proxy", "my-proxy"}},
+		{"service no longer in compose file", "old", "myapp-old", []string{"old", "myapp-old"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := liveAliases(tc.service, tc.container, "myapp", cf)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("liveAliases(%q, %q) = %v, want %v", tc.service, tc.container, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRemoveHostsRecord(t *testing.T) {
+	records := []hostsRecord{
+		{container: "myapp-db"},
+		{container: "myapp-web"},
+	}
+	got := removeHostsRecord(records, "myapp-db")
+	if len(got) != 1 || got[0].container != "myapp-web" {
+		t.Errorf("removeHostsRecord = %v", got)
+	}
+	if got := removeHostsRecord(records, "unknown"); len(got) != 2 {
+		t.Errorf("removeHostsRecord(unknown) = %v", got)
+	}
+}
