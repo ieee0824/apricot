@@ -31,8 +31,8 @@ func runDown(args []string) {
 		os.Exit(1)
 	}
 
-	// Stop and delete containers matching this project
-	for _, c := range containersForProject(containers, projectName) {
+	// Stop and delete this project's containers for services in this file.
+	for _, c := range containersForProject(containers, projectName, cf.Services) {
 		fmt.Printf("Stopping %s\n", c.Name)
 		if err := runner.Stop(c.Name); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: stop failed for %s: %v\n", c.Name, err)
@@ -63,11 +63,14 @@ func runDown(args []string) {
 	}
 }
 
-// containersForProject returns containers labeled as managed by this project.
-func containersForProject(containers []runner.Container, projectName string) []runner.Container {
+// containersForProject returns this project's containers for services defined
+// in the current Compose file. Other services in the same project are kept.
+func containersForProject(containers []runner.Container, projectName string, services map[string]compose.Service) []runner.Container {
 	var result []runner.Container
 	for _, c := range containers {
-		if c.Labels["apricot.project"] == projectName && c.Labels["apricot.service"] != "" {
+		service := c.Labels["apricot.service"]
+		_, defined := services[service]
+		if c.Labels["apricot.project"] == projectName && service != "" && defined {
 			result = append(result, c)
 		}
 	}
