@@ -12,13 +12,15 @@ func TestContainersForProject(t *testing.T) {
 	containers := []runner.Container{
 		{Name: "myproject-web", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "web"}},
 		{Name: "custom-db", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "db"}},
+		{Name: "myproject-orphan", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "orphan"}},
 		{Name: "other-web", Labels: map[string]string{"apricot.project": "other", "apricot.service": "web"}},
 		{Name: "myproject-unlabeled"},
 		{Name: "myproject-other", Labels: map[string]string{"apricot.project": "other", "apricot.service": "web"}},
 		{Name: "myproject-no-service", Labels: map[string]string{"apricot.project": "myproject"}},
 	}
 
-	got := containersForProject(containers, "myproject")
+	services := map[string]compose.Service{"web": {}, "db": {}}
+	got := containersForProject(containers, "myproject", services)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 owned containers, got %d: %v", len(got), got)
 	}
@@ -28,9 +30,24 @@ func TestContainersForProject(t *testing.T) {
 }
 
 func TestContainersForProject_Empty(t *testing.T) {
-	got := containersForProject(nil, "myproject")
+	got := containersForProject(nil, "myproject", nil)
 	if got != nil {
 		t.Errorf("expected nil, got %v", got)
+	}
+}
+
+func TestContainersForProject_OnlyCurrentComposeServices(t *testing.T) {
+	containers := []runner.Container{
+		{Name: "myproject-web", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "web"}},
+		{Name: "custom-name", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "custom"}},
+	}
+	services := map[string]compose.Service{"custom": {}}
+	got := containersForProject(containers, "myproject", services)
+	if len(got) != 1 || got[0].Name != "custom-name" {
+		t.Fatalf("expected only the service in the current Compose file, got %v", got)
+	}
+	if got := containersForProject(containers, "myproject", nil); len(got) != 0 {
+		t.Errorf("expected no containers for a file without services, got %v", got)
 	}
 }
 
