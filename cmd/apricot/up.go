@@ -311,6 +311,15 @@ func runUp(args []string) {
 				containerName = containerNameFor(projectName, name, svc.ContainerName)
 			}
 			if runner.ContainerExists(containerName) {
+				containers, err := runner.List(true)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error checking ownership of container %s: %v\n", containerName, err)
+					os.Exit(1)
+				}
+				if err := validateExistingContainerOwner(containers, containerName, projectName, name); err != nil {
+					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+					os.Exit(1)
+				}
 				if err := runner.StopQuiet(containerName); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
 				}
@@ -414,6 +423,21 @@ func runUp(args []string) {
 		}
 	}
 	wg.Wait()
+}
+
+// validateExistingContainerOwner fails closed when an occupied name cannot be
+// tied to the service apricot is about to recreate.
+func validateExistingContainerOwner(containers []runner.Container, containerName, projectName, serviceName string) error {
+	for _, c := range containers {
+		if c.Name != containerName {
+			continue
+		}
+		if c.Labels["apricot.project"] == projectName && c.Labels["apricot.service"] == serviceName {
+			return nil
+		}
+		return fmt.Errorf("container %q already exists but is not owned by service %q in project %q", containerName, serviceName, projectName)
+	}
+	return fmt.Errorf("container %q already exists but its ownership could not be verified", containerName)
 }
 
 // waitForHealthy polls a container's healthcheck until it passes, returning an

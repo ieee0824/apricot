@@ -10,20 +10,20 @@ import (
 
 func TestContainersForProject(t *testing.T) {
 	containers := []runner.Container{
-		{Name: "myproject-web"},
-		{Name: "myproject-db"},
-		{Name: "other-web"},
-		{Name: "myproject-extra"},
+		{Name: "myproject-web", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "web"}},
+		{Name: "custom-db", Labels: map[string]string{"apricot.project": "myproject", "apricot.service": "db"}},
+		{Name: "other-web", Labels: map[string]string{"apricot.project": "other", "apricot.service": "web"}},
+		{Name: "myproject-unlabeled"},
+		{Name: "myproject-other", Labels: map[string]string{"apricot.project": "other", "apricot.service": "web"}},
+		{Name: "myproject-no-service", Labels: map[string]string{"apricot.project": "myproject"}},
 	}
 
 	got := containersForProject(containers, "myproject")
-	if len(got) != 3 {
-		t.Fatalf("expected 3 containers, got %d: %v", len(got), got)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 owned containers, got %d: %v", len(got), got)
 	}
-	for _, c := range got {
-		if c.Name == "other-web" {
-			t.Errorf("other-web should not be included")
-		}
+	if got[0].Name != "myproject-web" || got[1].Name != "custom-db" {
+		t.Errorf("unexpected containers selected: %v", got)
 	}
 }
 

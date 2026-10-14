@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/ieee0824/apricot/internal/compose"
 	"github.com/ieee0824/apricot/internal/runner"
@@ -64,12 +63,11 @@ func runDown(args []string) {
 	}
 }
 
-// containersForProject returns containers whose name starts with "<projectName>-".
+// containersForProject returns containers labeled as managed by this project.
 func containersForProject(containers []runner.Container, projectName string) []runner.Container {
-	prefix := projectName + "-"
 	var result []runner.Container
 	for _, c := range containers {
-		if strings.HasPrefix(c.Name, prefix) {
+		if c.Labels["apricot.project"] == projectName && c.Labels["apricot.service"] != "" {
 			result = append(result, c)
 		}
 	}
