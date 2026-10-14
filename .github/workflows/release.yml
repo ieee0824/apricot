@@ -9,8 +9,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate release tag
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG" >&2
+            exit 1
+          fi
 
       - uses: actions/setup-go@v5
         with:
@@ -19,7 +28,7 @@ jobs:
       - name: Build darwin/arm64 binary
         run: |
           GOOS=darwin GOARCH=arm64 go build \
-            -ldflags "-s -w -X main.version=${{ github.ref_name }}" \
+            -ldflags "-s -w -X main.version=${RELEASE_TAG}" \
             -o apricot \
             ./cmd/apricot/
           tar czf apricot_darwin_arm64.tar.gz apricot
@@ -39,7 +48,7 @@ jobs:
 
       - name: Update homebrew-tap formula
         run: |
-          VERSION=${{ github.ref_name }}
+          VERSION="$RELEASE_TAG"
           SHA256=$(sha256sum apricot_darwin_arm64.tar.gz | awk '{print $1}')
 
           git clone git@github.com:ieee0824/homebrew-tap.git
