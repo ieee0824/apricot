@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ieee0824/apricot/internal/compose"
+	"github.com/ieee0824/apricot/internal/runner"
 )
 
 func TestContainerNameFor(t *testing.T) {
@@ -30,6 +31,53 @@ func TestContainerNameFor(t *testing.T) {
 			t.Errorf("containerNameFor(%q, %q, %q) = %q, want %q",
 				tt.project, tt.service, tt.containerName, got, tt.want)
 		}
+	}
+}
+
+func TestValidateExistingContainerOwner(t *testing.T) {
+	tests := []struct {
+		name       string
+		containers []runner.Container
+		wantError  bool
+	}{
+		{
+			name: "owned container",
+			containers: []runner.Container{{Name: "custom-web", Labels: map[string]string{
+				"apricot.project": "myproject", "apricot.service": "web",
+			}}},
+		},
+		{
+			name:       "unlabeled container",
+			containers: []runner.Container{{Name: "custom-web"}},
+			wantError:  true,
+		},
+		{
+			name: "different project",
+			containers: []runner.Container{{Name: "custom-web", Labels: map[string]string{
+				"apricot.project": "other", "apricot.service": "web",
+			}}},
+			wantError: true,
+		},
+		{
+			name: "different service",
+			containers: []runner.Container{{Name: "custom-web", Labels: map[string]string{
+				"apricot.project": "myproject", "apricot.service": "db",
+			}}},
+			wantError: true,
+		},
+		{
+			name:       "unverifiable container",
+			containers: []runner.Container{{Name: "another-container"}},
+			wantError:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateExistingContainerOwner(tt.containers, "custom-web", "myproject", "web")
+			if (err != nil) != tt.wantError {
+				t.Errorf("validateExistingContainerOwner() error = %v, wantError %v", err, tt.wantError)
+			}
+		})
 	}
 }
 
@@ -1061,12 +1109,12 @@ func assertContainsSequence(t *testing.T, args []string, flag, value string) {
 
 func TestHostsAliases(t *testing.T) {
 	tests := []struct {
-		name          string
-		service       string
-		container     string
-		instance      int
-		scaled        bool
-		want          []string
+		name      string
+		service   string
+		container string
+		instance  int
+		scaled    bool
+		want      []string
 	}{
 		{"unscaled service", "web", "myapp-web", 1, false, []string{"web", "myapp-web"}},
 		{"custom container_name equal to service", "web", "web", 1, false, []string{"web"}},
