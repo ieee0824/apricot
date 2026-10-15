@@ -89,7 +89,16 @@ func Prepare(contextDir, dockerfile string) (dir string, cleanup func(), err err
 	}
 	cleanup = func() { os.RemoveAll(tmp) }
 
-	walkErr := filepath.WalkDir(contextDir, func(p string, d fs.DirEntry, err error) error {
+	walkErr := copyFilteredContext(contextDir, tmp, pm)
+	if walkErr != nil {
+		cleanup()
+		return "", nil, walkErr
+	}
+	return tmp, cleanup, nil
+}
+
+func copyFilteredContext(contextDir, destination string, pm *patternmatcher.PatternMatcher) error {
+	return filepath.WalkDir(contextDir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -104,7 +113,7 @@ func Prepare(contextDir, dockerfile string) (dir string, cleanup func(), err err
 		if err != nil {
 			return err
 		}
-		dst := filepath.Join(tmp, rel)
+		dst := filepath.Join(destination, rel)
 		if d.IsDir() {
 			if excluded {
 				if pm.Exclusions() {
@@ -126,11 +135,6 @@ func Prepare(contextDir, dockerfile string) (dir string, cleanup func(), err err
 		}
 		return copyEntry(p, dst, d)
 	})
-	if walkErr != nil {
-		cleanup()
-		return "", nil, walkErr
-	}
-	return tmp, cleanup, nil
 }
 
 // copyEntry replicates one non-directory context entry, creating missing
