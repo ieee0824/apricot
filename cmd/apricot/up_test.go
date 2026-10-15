@@ -260,15 +260,49 @@ func TestBuildRunArgs_Network_Explicit(t *testing.T) {
 	assertContainsSequence(t, args, "--network", "p_frontend")
 }
 
-func TestBuildRunArgs_Network_AutoAttach(t *testing.T) {
-	// No networks on service but project has networks → auto-attach all
+func TestBuildRunArgs_Network_ImplicitDefault(t *testing.T) {
 	svc := compose.Service{Image: "myapp"}
 	cf := &compose.ComposeFile{
-		Networks: map[string]compose.Network{"default": {}},
+		Networks: map[string]compose.Network{"default": {}, "private": {}},
 	}
 	args := buildRunArgs("p-app", "app", "p", "", svc, cf)
 
 	assertContainsSequence(t, args, "--network", "p_default")
+	if slices.Contains(args, "p_private") {
+		t.Fatalf("unconfigured service attached to private network: %v", args)
+	}
+}
+
+func TestAddImplicitDefaultNetwork(t *testing.T) {
+	cf := &compose.ComposeFile{
+		Services: map[string]compose.Service{
+			"frontend": {Image: "alpine"},
+			"backend":  {Image: "alpine", Networks: []interface{}{"private"}},
+		},
+		Networks: map[string]compose.Network{"private": {}},
+	}
+	addImplicitDefaultNetwork(cf)
+	if _, ok := cf.Networks["default"]; !ok {
+		t.Fatal("missing project default network")
+	}
+	front := buildRunArgs("p-frontend", "frontend", "p", "", cf.Services["frontend"], cf)
+	back := buildRunArgs("p-backend", "backend", "p", "", cf.Services["backend"], cf)
+	assertContainsSequence(t, front, "--network", "p_default")
+	assertContainsSequence(t, back, "--network", "p_private")
+	if slices.Contains(front, "p_private") || slices.Contains(back, "p_default") {
+		t.Fatalf("services share an unintended network: front=%v back=%v", front, back)
+	}
+	if err := validateServiceNetworks(cf); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAddImplicitDefaultNetwork_ExplicitOnly(t *testing.T) {
+	cf := &compose.ComposeFile{Services: map[string]compose.Service{"backend": {Networks: []interface{}{"private"}}}, Networks: map[string]compose.Network{"private": {}}}
+	addImplicitDefaultNetwork(cf)
+	if _, ok := cf.Networks["default"]; ok {
+		t.Fatal("unexpected default network for explicit-only services")
+	}
 }
 
 func TestBuildRunArgs_WorkingDir(t *testing.T) {

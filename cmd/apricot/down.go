@@ -23,6 +23,7 @@ func runDown(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+	addImplicitDefaultNetwork(cf)
 
 	// Get all containers (including stopped)
 	containers, err := runner.List(true)
