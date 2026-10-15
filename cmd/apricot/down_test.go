@@ -92,6 +92,17 @@ func TestNetworkNamesForProject_Empty(t *testing.T) {
 	}
 }
 
+func TestNetworkNamesForProject_ImplicitDefault(t *testing.T) {
+	cf := &compose.ComposeFile{Services: map[string]compose.Service{"frontend": {}}, Networks: map[string]compose.Network{"private": {}}}
+	addImplicitDefaultNetwork(cf)
+	got := networkNamesForProject(cf.Networks, "project")
+	sort.Strings(got)
+	want := []string{"project_default", "project_private"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("network names = %v, want %v", got, want)
+	}
+}
+
 func TestVolumeNamesForProject(t *testing.T) {
 	volumes := map[string]compose.Volume{
 		"data":  {},

@@ -123,7 +123,7 @@ func runUp(args []string) {
 		fmt.Fprintf(os.Stderr, "Warning: --scale references unknown service %q; ignoring\n", name)
 	}
 
-	// Skip networks on macOS < 26 (Apple Container limitation)
+	// Skip networks on macOS < 26 (Apple Container limitation).
 	if !supportsNetworks() {
 		if len(cf.Networks) > 0 {
 			fmt.Fprintln(os.Stderr, "Warning: network configuration requires macOS 26 or newer, skipping networks")
@@ -133,6 +133,8 @@ func runUp(args []string) {
 			svc.Networks = nil
 			cf.Services[name] = svc
 		}
+	} else {
+		addImplicitDefaultNetwork(cf)
 	}
 
 	// Reject services that reference networks not declared at the top level,
@@ -585,12 +587,12 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "-v", v)
 	}
 
-	// Networks
+	// Networks. Compose attaches a service with no networks declaration only to
+	// its project-scoped default network, never to every declared network.
 	networkKeys := compose.ToNetworkNames(svc.Networks)
-	if len(networkKeys) == 0 && len(cf.Networks) > 0 {
-		// attach to all project networks if none specified
-		for n := range cf.Networks {
-			networkKeys = append(networkKeys, n)
+	if svc.Networks == nil {
+		if _, ok := cf.Networks["default"]; ok {
+			networkKeys = []string{"default"}
 		}
 	}
 	for _, key := range networkKeys {
@@ -696,6 +698,22 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	args = append(args, compose.ToCommandSlice(svc.Command)...)
 
 	return args
+}
+
+// addImplicitDefaultNetwork adds the project network used by services that do
+// not declare networks. An explicit default network retains its configuration.
+func addImplicitDefaultNetwork(cf *compose.ComposeFile) {
+	for _, svc := range cf.Services {
+		if svc.Networks == nil {
+			if cf.Networks == nil {
+				cf.Networks = make(map[string]compose.Network)
+			}
+			if _, ok := cf.Networks["default"]; !ok {
+				cf.Networks["default"] = compose.Network{}
+			}
+			return
+		}
+	}
 }
 
 // prefixNamedVolume rewrites the source of a named-volume spec to the
