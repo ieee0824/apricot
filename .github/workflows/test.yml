@@ -7,6 +7,26 @@ on:
     branches: [main]
 
 jobs:
+  mikoto:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go for mikoto
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Install mikoto
+        run: go install github.com/ieee0824/mikoto/cmd/mikoto@v0.0.0-20261001040934-03380e477fe4
+
+      - name: Download project dependencies
+        run: go mod download
+
+      - name: Check function length and purity
+        run: |
+          MIKOTO_BIN="$(go env GOPATH)/bin/mikoto" bash scripts/check-mikoto.sh
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

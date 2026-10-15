@@ -119,6 +119,7 @@ func interpolateYAMLValues(node *yaml.Node, lookup envLookup) error {
 	return nil
 }
 
+//mikoto:pure
 func validVariableName(s string) bool {
 	if s == "" || !variableStart(s[0]) {
 		return false
@@ -131,8 +132,11 @@ func validVariableName(s string) bool {
 	return true
 }
 
+//mikoto:pure
 func variableStart(c byte) bool { return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
-func variablePart(c byte) bool  { return variableStart(c) || c >= '0' && c <= '9' }
+
+//mikoto:pure
+func variablePart(c byte) bool { return variableStart(c) || c >= '0' && c <= '9' }
 
 // interpolateString handles Compose's variable forms and leaves unrelated '$'
 // characters alone. Doubled dollars emit a literal '$' without re-expansion.
