@@ -352,6 +352,7 @@ func ContainerIPs(name string) (map[string]string, error) {
 // HostsEntry is one apricot-managed /etc/hosts line for ReplaceHosts.
 type HostsEntry struct {
 	// Line is the entry without the marker, e.g. "192.168.66.4 web myapp-web".
+	// An empty line removes the matching entry without adding a replacement.
 	Line string
 	// Marker identifies the entry across updates (the container name). The
 	// written line gets a trailing "# apricot:<marker>" comment, and any
@@ -378,7 +379,9 @@ func ReplaceHosts(container string, entries []HostsEntry) error {
 			patterns = append(patterns, "-e "+shellQuote(regexpEscape(e.Line[i:])+"$"))
 		}
 		patterns = append(patterns, "-e "+shellQuote(regexpEscape(" # apricot:"+e.Marker)+"$"))
-		lines = append(lines, shellQuote(e.Line+" # apricot:"+e.Marker))
+		if e.Line != "" {
+			lines = append(lines, shellQuote(e.Line+" # apricot:"+e.Marker))
+		}
 	}
 	script := "h=$(grep -v " + strings.Join(patterns, " ") + " /etc/hosts); " +
 		"printf '%s\\n' \"$h\" " + strings.Join(lines, " ") + " > /etc/hosts"

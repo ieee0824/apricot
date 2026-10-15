@@ -81,6 +81,42 @@ func TestValidateExistingContainerOwner(t *testing.T) {
 	}
 }
 
+func TestObsoleteScaledContainers(t *testing.T) {
+	owned := map[string]string{"apricot.project": "mine", "apricot.service": "web"}
+	otherProject := map[string]string{"apricot.project": "other", "apricot.service": "web"}
+	otherService := map[string]string{"apricot.project": "mine", "apricot.service": "db"}
+	containers := []runner.Container{
+		{Name: "mine-web-1", Labels: owned},
+		{Name: "mine-web-2", Labels: owned},
+		{Name: "mine-web-3", Labels: owned},
+		{Name: "mine-web", Labels: owned},
+		{Name: "mine-web-02", Labels: owned},
+		{Name: "mine-web-4", Labels: otherProject},
+		{Name: "mine-web-5", Labels: otherService},
+		{Name: "other-web-2", Labels: otherProject},
+		{Name: "mine-web-6"},
+	}
+	for _, tt := range []struct {
+		name    string
+		desired int
+		want    []string
+	}{
+		{"two to one", 1, []string{"mine-web", "mine-web-2", "mine-web-3"}},
+		{"two to zero", 0, []string{"mine-web", "mine-web-1", "mine-web-2", "mine-web-3"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := obsoleteScaledContainers(containers, "mine", "web", "", tt.desired)
+			var names []string
+			for _, c := range got {
+				names = append(names, c.Name)
+			}
+			if !slices.Equal(names, tt.want) {
+				t.Errorf("names = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildRunArgs_Basic(t *testing.T) {
 	svc := compose.Service{
 		Image: "nginx:latest",

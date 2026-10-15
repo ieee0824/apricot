@@ -652,6 +652,21 @@ func TestContainerIPs(t *testing.T) {
 }
 
 func TestReplaceHosts(t *testing.T) {
+	t.Run("removes a scaled-down container entry", func(t *testing.T) {
+		fake, recorded := fakeExecCommand("", 0)
+		restore := withExecCommand(fake)
+		defer restore()
+
+		if err := ReplaceHosts("myapp-web-1", []HostsEntry{{Marker: "myapp-web-2"}}); err != nil {
+			t.Fatalf("ReplaceHosts: %v", err)
+		}
+		wantScript := `h=$(grep -v -e ' # apricot:myapp-web-2$' /etc/hosts); printf '%s\n' "$h"  > /etc/hosts`
+		want := []string{"container", "exec", "-u", "0", "myapp-web-1", "/bin/sh", "-c", wantScript}
+		if !reflect.DeepEqual(*recorded, want) {
+			t.Errorf("args = %#v, want %#v", *recorded, want)
+		}
+	})
+
 	t.Run("removes stale entries by marker and alias suffix, then appends", func(t *testing.T) {
 		fake, recorded := fakeExecCommand("", 0)
 		restore := withExecCommand(fake)

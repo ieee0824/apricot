@@ -259,6 +259,42 @@ func runUp(args []string) {
 
 	for _, name := range order {
 		svc := cf.Services[name]
+		n, scaled := scale[name]
+		if !scaled {
+			n = 1
+		} else {
+			containers, err := runner.List(true)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error listing containers for --scale %s: %v\n", name, err)
+				os.Exit(1)
+			}
+			for _, c := range obsoleteScaledContainers(containers, projectName, name, svc.ContainerName, n) {
+				fmt.Printf("Removing %s\n", c.Name)
+				if c.State == "running" {
+					if err := runner.StopQuiet(c.Name); err != nil {
+						fmt.Fprintf(os.Stderr, "Error stopping %s: %v\n", c.Name, err)
+						os.Exit(1)
+					}
+				}
+				if err := runner.DeleteQuiet(c.Name); err != nil {
+					fmt.Fprintf(os.Stderr, "Error deleting %s: %v\n", c.Name, err)
+					os.Exit(1)
+				}
+				if hostsInject {
+					for _, peer := range hostsRecords {
+						if peer.container != c.Name {
+							if err := runner.ReplaceHosts(peer.container, []runner.HostsEntry{{Marker: c.Name}}); err != nil {
+								fmt.Fprintf(os.Stderr, "Warning: failed to remove /etc/hosts entry for %s in %s: %v\n", c.Name, peer.container, err)
+							}
+						}
+					}
+					hostsRecords = removeHostsRecord(hostsRecords, c.Name)
+				}
+			}
+		}
+		if n == 0 {
+			continue
+		}
 
 		// Wait for dependencies this service requires to be healthy. Services are
 		// started in dependency order, so a dependency is already running here.
@@ -314,11 +350,6 @@ func runUp(args []string) {
 			if svc.Image == "" {
 				svc.Image = imageName
 			}
-		}
-
-		n, scaled := scale[name]
-		if !scaled {
-			n = 1
 		}
 
 		for i := 1; i <= n; i++ {
@@ -456,6 +487,37 @@ func validateExistingContainerOwner(containers []runner.Container, containerName
 		return fmt.Errorf("container %q already exists but is not owned by service %q in project %q", containerName, serviceName, projectName)
 	}
 	return fmt.Errorf("container %q already exists but its ownership could not be verified", containerName)
+}
+
+// obsoleteScaledContainers returns only containers owned by this service whose
+// canonical replica name is above the requested count. An explicitly scaled
+// service also replaces its previous single-container name, if present.
+func obsoleteScaledContainers(containers []runner.Container, projectName, serviceName, singleName string, desired int) []runner.Container {
+	prefix := projectName + "-" + serviceName + "-"
+	singleName = containerNameFor(projectName, serviceName, singleName)
+	var obsolete []runner.Container
+	for _, c := range containers {
+		if c.Labels["apricot.project"] != projectName || c.Labels["apricot.service"] != serviceName {
+			continue
+		}
+		if c.Name == singleName {
+			// A custom single-container name may itself be a desired replica name.
+			if i, err := strconv.Atoi(strings.TrimPrefix(c.Name, prefix)); strings.HasPrefix(c.Name, prefix) && err == nil && i >= 1 && i <= desired && prefix+strconv.Itoa(i) == c.Name {
+				continue
+			}
+			obsolete = append(obsolete, c)
+			continue
+		}
+		if !strings.HasPrefix(c.Name, prefix) {
+			continue
+		}
+		i, err := strconv.Atoi(strings.TrimPrefix(c.Name, prefix))
+		if err == nil && i >= 1 && i > desired && prefix+strconv.Itoa(i) == c.Name {
+			obsolete = append(obsolete, c)
+		}
+	}
+	sort.Slice(obsolete, func(i, j int) bool { return obsolete[i].Name < obsolete[j].Name })
+	return obsolete
 }
 
 // waitForHealthy polls a container's healthcheck until it passes, returning an
