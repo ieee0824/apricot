@@ -34,6 +34,39 @@ func TestContainerNameFor(t *testing.T) {
 	}
 }
 
+func TestNewUpRuntimeInitializesHealthAndSharedState(t *testing.T) {
+	t.Setenv(disableHostsInjectEnv, "1")
+	cf := &compose.ComposeFile{Services: map[string]compose.Service{
+		"db":  {Healthcheck: &compose.Healthcheck{Test: []interface{}{"CMD", "true"}}},
+		"web": {},
+	}}
+	created := map[string]bool{"p_data": true}
+	u := newUpRuntime("p", "/compose", cf, created)
+	if u.projectName != "p" || u.composeDir != "/compose" || u.cf != cf || u.hostsInject {
+		t.Fatalf("unexpected runtime configuration: %+v", u)
+	}
+	if _, ok := u.healthSpecs["db"]; !ok {
+		t.Fatal("dependency healthcheck was not initialized")
+	}
+	if _, ok := u.healthSpecs["web"]; ok {
+		t.Fatal("service without a healthcheck acquired a health spec")
+	}
+	delete(u.createdVolumes, "p_data")
+	if created["p_data"] {
+		t.Fatal("volume initialization state is not shared across replicas")
+	}
+}
+
+func TestUpServiceOrderIncludesOnlyTargetsAndDependencies(t *testing.T) {
+	cf := &compose.ComposeFile{Services: map[string]compose.Service{
+		"db": {}, "web": {DependsOn: []interface{}{"db"}}, "unrelated": {},
+	}}
+	got := upServiceOrder(cf, []string{"web"})
+	if !slices.Equal(got, []string{"db", "web"}) {
+		t.Fatalf("order = %v, want [db web]", got)
+	}
+}
+
 func TestValidateExistingContainerOwner(t *testing.T) {
 	tests := []struct {
 		name       string

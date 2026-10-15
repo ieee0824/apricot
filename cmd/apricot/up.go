@@ -123,6 +123,36 @@ func runUp(args []string) {
 		fmt.Fprintf(os.Stderr, "Warning: --scale references unknown service %q; ignoring\n", name)
 	}
 
+	prepareUpNetworks(cf)
+	ensureUpNetworks(cf, projectName)
+	createdVolumes := ensureUpVolumes(cf, projectName)
+	order := upServiceOrder(cf, fs.Args())
+	u := newUpRuntime(projectName, composeDir, cf, createdVolumes)
+	for _, name := range order {
+		u.startService(name, scale, *forceBuild)
+	}
+	if !*detach && len(u.started) > 0 {
+		followUpLogs(u.started)
+	}
+}
+
+type startedContainer struct {
+	name    string
+	service string
+}
+
+type upRuntime struct {
+	projectName    string
+	composeDir     string
+	cf             *compose.ComposeFile
+	createdVolumes map[string]bool
+	hostsInject    bool
+	hostsRecords   []hostsRecord
+	healthSpecs    map[string]compose.HealthcheckSpec
+	started        []startedContainer
+}
+
+func prepareUpNetworks(cf *compose.ComposeFile) {
 	// Skip networks on macOS < 26 (Apple Container limitation).
 	if !supportsNetworks() {
 		if len(cf.Networks) > 0 {
@@ -144,7 +174,9 @@ func runUp(args []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
 
+func ensureUpNetworks(cf *compose.ComposeFile, projectName string) {
 	// Create networks (skip external networks)
 	for name, net := range cf.Networks {
 		if net.External {
@@ -168,7 +200,9 @@ func runUp(args []string) {
 			fmt.Fprintf(os.Stderr, "Warning: network create failed for %s: %v\n", networkName, err)
 		}
 	}
+}
 
+func ensureUpVolumes(cf *compose.ComposeFile, projectName string) map[string]bool {
 	// Create volumes. Newly created ones are remembered so they can be seeded
 	// from the service image on first mount (docker's copy-on-first-use).
 	createdVolumes := make(map[string]bool)
@@ -194,6 +228,10 @@ func runUp(args []string) {
 		createdVolumes[volumeName] = true
 	}
 
+	return createdVolumes
+}
+
+func upServiceOrder(cf *compose.ComposeFile, targets []string) []string {
 	// Sort services by dependency order
 	order, err := compose.SortServices(cf.Services)
 	if err != nil {
@@ -202,7 +240,7 @@ func runUp(args []string) {
 	}
 
 	// Filter to only requested services (and their dependencies) if specified
-	if targets := fs.Args(); len(targets) > 0 {
+	if len(targets) > 0 {
 		needed := make(map[string]bool)
 		var collect func(string)
 		collect = func(name string) {
@@ -234,212 +272,225 @@ func runUp(args []string) {
 		order = filtered
 	}
 
-	// Collect started container names for log streaming (foreground mode)
-	type startedContainer struct {
-		name    string
-		service string
-	}
-	var started []startedContainer
+	return order
+}
 
-	// Containers already made resolvable by name via /etc/hosts injection.
-	// Seeded from the project's already running containers so that services
-	// not restarted by this run (e.g. `up <service>`) both keep receiving
-	// fresh entries and stay resolvable from recreated containers.
-	hostsInject := os.Getenv(disableHostsInjectEnv) == ""
-	var hostsRecords []hostsRecord
-	if hostsInject {
-		hostsRecords = liveHostsRecords(projectName, cf)
+func newUpRuntime(projectName, composeDir string, cf *compose.ComposeFile, createdVolumes map[string]bool) *upRuntime {
+	u := &upRuntime{projectName: projectName, composeDir: composeDir, cf: cf, createdVolumes: createdVolumes}
+	// Seed hosts records so partial up keeps running peers resolvable.
+	u.hostsInject = os.Getenv(disableHostsInjectEnv) == ""
+	if u.hostsInject {
+		u.hostsRecords = liveHostsRecords(projectName, cf)
 	}
-
-	// Pre-compute normalized healthchecks per service for service_healthy waits.
-	healthSpecs := map[string]compose.HealthcheckSpec{}
-	for sname, s := range cf.Services {
-		if spec, ok := s.Healthcheck.Normalize(); ok {
-			healthSpecs[sname] = spec
+	u.healthSpecs = make(map[string]compose.HealthcheckSpec)
+	for name, svc := range cf.Services {
+		if spec, ok := svc.Healthcheck.Normalize(); ok {
+			u.healthSpecs[name] = spec
 		}
 	}
+	return u
+}
 
-	for _, name := range order {
-		svc := cf.Services[name]
-		n, scaled := scale[name]
-		if !scaled {
-			n = 1
-		} else {
-			containers, err := runner.List(true)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error listing containers for --scale %s: %v\n", name, err)
+func (u *upRuntime) startService(name string, scale scaleMap, forceBuild bool) {
+	svc := u.cf.Services[name]
+	n, scaled := scale[name]
+	if !scaled {
+		n = 1
+	} else {
+		u.removeSurplusReplicas(name, svc, n)
+	}
+	if n == 0 {
+		return
+	}
+	u.waitDependencies(name, svc)
+	svc = u.ensureServiceImage(name, svc, forceBuild)
+	for i := 1; i <= n; i++ {
+		u.startReplica(name, svc, i, scaled)
+	}
+}
+
+func (u *upRuntime) removeSurplusReplicas(name string, svc compose.Service, n int) {
+	containers, err := runner.List(true)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing containers for --scale %s: %v\n", name, err)
+		os.Exit(1)
+	}
+	for _, c := range obsoleteScaledContainers(containers, u.projectName, name, svc.ContainerName, n) {
+		fmt.Printf("Removing %s\n", c.Name)
+		if c.State == "running" {
+			if err := runner.StopQuiet(c.Name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error stopping %s: %v\n", c.Name, err)
 				os.Exit(1)
 			}
-			for _, c := range obsoleteScaledContainers(containers, projectName, name, svc.ContainerName, n) {
-				fmt.Printf("Removing %s\n", c.Name)
-				if c.State == "running" {
-					if err := runner.StopQuiet(c.Name); err != nil {
-						fmt.Fprintf(os.Stderr, "Error stopping %s: %v\n", c.Name, err)
-						os.Exit(1)
+		}
+		if err := runner.DeleteQuiet(c.Name); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting %s: %v\n", c.Name, err)
+			os.Exit(1)
+		}
+		if u.hostsInject {
+			for _, peer := range u.hostsRecords {
+				if peer.container != c.Name {
+					if err := runner.ReplaceHosts(peer.container, []runner.HostsEntry{{Marker: c.Name}}); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to remove /etc/hosts entry for %s in %s: %v\n", c.Name, peer.container, err)
 					}
-				}
-				if err := runner.DeleteQuiet(c.Name); err != nil {
-					fmt.Fprintf(os.Stderr, "Error deleting %s: %v\n", c.Name, err)
-					os.Exit(1)
-				}
-				if hostsInject {
-					for _, peer := range hostsRecords {
-						if peer.container != c.Name {
-							if err := runner.ReplaceHosts(peer.container, []runner.HostsEntry{{Marker: c.Name}}); err != nil {
-								fmt.Fprintf(os.Stderr, "Warning: failed to remove /etc/hosts entry for %s in %s: %v\n", c.Name, peer.container, err)
-							}
-						}
-					}
-					hostsRecords = removeHostsRecord(hostsRecords, c.Name)
 				}
 			}
+			u.hostsRecords = removeHostsRecord(u.hostsRecords, c.Name)
 		}
-		if n == 0 {
+	}
+}
+
+func (u *upRuntime) waitDependencies(name string, svc compose.Service) {
+	// Wait for dependencies this service requires to be healthy. Services are
+	// started in dependency order, so a dependency is already running here.
+	for dep, cond := range compose.ToDependsOnConditions(svc.DependsOn) {
+		if cond != "service_healthy" {
 			continue
 		}
-
-		// Wait for dependencies this service requires to be healthy. Services are
-		// started in dependency order, so a dependency is already running here.
-		for dep, cond := range compose.ToDependsOnConditions(svc.DependsOn) {
-			if cond != "service_healthy" {
+		spec, ok := u.healthSpecs[dep]
+		if !ok {
+			fmt.Fprintf(os.Stderr, "Warning: service %q depends on %q being healthy, but %q has no healthcheck; not waiting\n", name, dep, dep)
+			continue
+		}
+		for _, sc := range u.started {
+			if sc.service != dep {
 				continue
 			}
-			spec, ok := healthSpecs[dep]
-			if !ok {
-				fmt.Fprintf(os.Stderr, "Warning: service %q depends on %q being healthy, but %q has no healthcheck; not waiting\n", name, dep, dep)
-				continue
-			}
-			for _, sc := range started {
-				if sc.service != dep {
-					continue
-				}
-				fmt.Printf("Waiting for %s to be healthy...\n", sc.name)
-				if err := waitForHealthy(context.Background(), sc.name, spec, runner.ExecCheck); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-			}
-		}
-
-		// Build image if build: is defined
-		if bc := compose.ToBuildConfig(svc.Build); bc != nil {
-			// Resolve build context relative to the compose file's directory
-			if !filepath.IsAbs(bc.Context) {
-				bc.Context = filepath.Join(composeDir, bc.Context)
-			}
-			imageName := svc.Image
-			if imageName == "" {
-				imageName = projectName + "_" + name
-			}
-			// Match docker-compose: build only when the image is missing;
-			// --build forces a rebuild.
-			if *forceBuild || !runner.ImageExists(imageName) {
-				fmt.Printf("Building %s\n", imageName)
-				cleanupCtx := prepareFilteredContext(bc)
-				buildArgs, err := buildImageArgs(imageName, bc)
-				if err != nil {
-					cleanupCtx()
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				err = runner.Build(buildArgs)
-				cleanupCtx()
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
-					os.Exit(1)
-				}
-			}
-			if svc.Image == "" {
-				svc.Image = imageName
-			}
-		}
-
-		for i := 1; i <= n; i++ {
-			var containerName string
-			if scaled {
-				containerName = projectName + "-" + name + "-" + strconv.Itoa(i)
-			} else {
-				containerName = containerNameFor(projectName, name, svc.ContainerName)
-			}
-			if runner.ContainerExists(containerName) {
-				containers, err := runner.List(true)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error checking ownership of container %s: %v\n", containerName, err)
-					os.Exit(1)
-				}
-				if err := validateExistingContainerOwner(containers, containerName, projectName, name); err != nil {
-					fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-					os.Exit(1)
-				}
-				if err := runner.StopQuiet(containerName); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
-				}
-				if err := runner.DeleteQuiet(containerName); err != nil {
-					fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
-				}
-				// The recreated container gets a new IP; drop the stale record.
-				hostsRecords = removeHostsRecord(hostsRecords, containerName)
-			}
-
-			if err := ensureBindMountDirs(compose.ToVolumeList(svc.Volumes), composeDir); err != nil {
+			fmt.Printf("Waiting for %s to be healthy...\n", sc.name)
+			if err := waitForHealthy(context.Background(), sc.name, spec, runner.ExecCheck); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
+		}
+	}
+}
 
-			// Seed volumes this run created from the service image before the
-			// first mount, mimicking docker's copy-on-first-use for named
-			// volumes (apple/container#729): without it a fresh volume is a
-			// root-owned empty directory that non-root users cannot write to.
-			if os.Getenv(disableVolumeInitEnv) == "" {
-				for _, m := range namedVolumeMounts(svc, projectName, composeDir, cf) {
-					if !createdVolumes[m[0]] {
-						continue
-					}
-					delete(createdVolumes, m[0])
-					if err := runner.VolumeInitFromImage(m[0], m[1], svc.Image); err != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to seed volume %s from image %s (needs /bin/sh): %v\n", m[0], svc.Image, err)
-					}
-				}
-			}
-
-			runArgs := buildRunArgs(containerName, name, projectName, composeDir, svc, cf)
-
-			// `container run -t -i` configures the calling terminal and fails
-			// with ENODEV when stdin is not one, even detached — so without a
-			// terminal, stdin_open is dropped instead of failing the start.
-			if svc.Tty && svc.StdinOpen && !stdinIsTerminal() {
-				runArgs = removeFirstArg(runArgs, "-i")
-				fmt.Fprintf(os.Stderr, "Warning: service %q: stdin_open is ignored because stdin is not a terminal (container run -t -i requires one)\n", name)
-			}
-
-			fmt.Printf("Starting %s\n", containerName)
-			// Always start detached; foreground mode streams logs below
-			if err := runner.Run(runArgs, true); err != nil {
-				fmt.Fprintf(os.Stderr, "Error starting %s: %v\n", containerName, err)
+func (u *upRuntime) ensureServiceImage(name string, svc compose.Service, forceBuild bool) compose.Service {
+	// Build image if build: is defined
+	if bc := compose.ToBuildConfig(svc.Build); bc != nil {
+		// Resolve build context relative to the compose file's directory
+		if !filepath.IsAbs(bc.Context) {
+			bc.Context = filepath.Join(u.composeDir, bc.Context)
+		}
+		imageName := svc.Image
+		if imageName == "" {
+			imageName = u.projectName + "_" + name
+		}
+		// Match docker-compose: build only when the image is missing;
+		// --build forces a rebuild.
+		if forceBuild || !runner.ImageExists(imageName) {
+			fmt.Printf("Building %s\n", imageName)
+			cleanupCtx := prepareFilteredContext(bc)
+			buildArgs, err := buildImageArgs(imageName, bc)
+			if err != nil {
+				cleanupCtx()
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			started = append(started, startedContainer{name: containerName, service: name})
+			err = runner.Build(buildArgs)
+			cleanupCtx()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error building %s: %v\n", imageName, err)
+				os.Exit(1)
+			}
+		}
+		if svc.Image == "" {
+			svc.Image = imageName
+		}
+	}
+	return svc
+}
 
-			// apple/container has no container-to-container DNS on its networks
-			// (apple/container#1809), so emulate docker-compose service discovery
-			// by cross-injecting name entries into every container's /etc/hosts.
-			if hostsInject {
-				ips, err := runner.ContainerIPs(containerName)
-				if err != nil || len(ips) == 0 {
-					fmt.Fprintf(os.Stderr, "Warning: could not determine IP of %s; peers will not resolve it by name: %v\n", containerName, err)
-					continue
-				}
-				rec := hostsRecord{container: containerName, aliases: hostsAliases(name, containerName, i, scaled), ips: ips}
-				injectServiceHosts(hostsRecords, rec)
-				hostsRecords = append(hostsRecords, rec)
+func (u *upRuntime) startReplica(name string, svc compose.Service, i int, scaled bool) {
+	var containerName string
+	if scaled {
+		containerName = u.projectName + "-" + name + "-" + strconv.Itoa(i)
+	} else {
+		containerName = containerNameFor(u.projectName, name, svc.ContainerName)
+	}
+	u.replaceExistingContainer(containerName, name)
+
+	u.prepareReplicaVolumes(svc)
+
+	runArgs := buildRunArgs(containerName, name, u.projectName, u.composeDir, svc, u.cf)
+
+	// `container run -t -i` configures the calling terminal and fails
+	// with ENODEV when stdin is not one, even detached — so without a
+	// terminal, stdin_open is dropped instead of failing the start.
+	if svc.Tty && svc.StdinOpen && !stdinIsTerminal() {
+		runArgs = removeFirstArg(runArgs, "-i")
+		fmt.Fprintf(os.Stderr, "Warning: service %q: stdin_open is ignored because stdin is not a terminal (container run -t -i requires one)\n", name)
+	}
+
+	fmt.Printf("Starting %s\n", containerName)
+	// Always start detached; foreground mode streams logs below
+	if err := runner.Run(runArgs, true); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting %s: %v\n", containerName, err)
+		os.Exit(1)
+	}
+	u.started = append(u.started, startedContainer{name: containerName, service: name})
+
+	// apple/container has no container-to-container DNS on its networks
+	// (apple/container#1809), so emulate docker-compose service discovery
+	// by cross-injecting name entries into every container's /etc/hosts.
+	if u.hostsInject {
+		ips, err := runner.ContainerIPs(containerName)
+		if err != nil || len(ips) == 0 {
+			fmt.Fprintf(os.Stderr, "Warning: could not determine IP of %s; peers will not resolve it by name: %v\n", containerName, err)
+			return
+		}
+		rec := hostsRecord{container: containerName, aliases: hostsAliases(name, containerName, i, scaled), ips: ips}
+		injectServiceHosts(u.hostsRecords, rec)
+		u.hostsRecords = append(u.hostsRecords, rec)
+	}
+}
+
+func (u *upRuntime) replaceExistingContainer(containerName, name string) {
+	if runner.ContainerExists(containerName) {
+		containers, err := runner.List(true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error checking ownership of container %s: %v\n", containerName, err)
+			os.Exit(1)
+		}
+		if err := validateExistingContainerOwner(containers, containerName, u.projectName, name); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runner.StopQuiet(containerName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to stop existing container %s: %v\n", containerName, err)
+		}
+		if err := runner.DeleteQuiet(containerName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to delete existing container %s: %v\n", containerName, err)
+		}
+		// The recreated container gets a new IP; drop the stale record.
+		u.hostsRecords = removeHostsRecord(u.hostsRecords, containerName)
+	}
+}
+
+func (u *upRuntime) prepareReplicaVolumes(svc compose.Service) {
+	if err := ensureBindMountDirs(compose.ToVolumeList(svc.Volumes), u.composeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Seed volumes this run created from the service image before the
+	// first mount, mimicking docker's copy-on-first-use for named
+	// volumes (apple/container#729): without it a fresh volume is a
+	// root-owned empty directory that non-root users cannot write to.
+	if os.Getenv(disableVolumeInitEnv) == "" {
+		for _, m := range namedVolumeMounts(svc, u.projectName, u.composeDir, u.cf) {
+			if !u.createdVolumes[m[0]] {
+				continue
+			}
+			delete(u.createdVolumes, m[0])
+			if err := runner.VolumeInitFromImage(m[0], m[1], svc.Image); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to seed volume %s from image %s (needs /bin/sh): %v\n", m[0], svc.Image, err)
 			}
 		}
 	}
+}
 
-	if *detach || len(started) == 0 {
-		return
-	}
-
+func followUpLogs(started []startedContainer) {
 	// Foreground mode: stream logs from all containers, stop on Ctrl+C
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -587,17 +638,7 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "-v", v)
 	}
 
-	// Networks. Compose attaches a service with no networks declaration only to
-	// its project-scoped default network, never to every declared network.
-	networkKeys := compose.ToNetworkNames(svc.Networks)
-	if svc.Networks == nil {
-		if _, ok := cf.Networks["default"]; ok {
-			networkKeys = []string{"default"}
-		}
-	}
-	for _, key := range networkKeys {
-		args = append(args, "--network", compose.ResolveNetworkName(key, projectName, cf.Networks[key]))
-	}
+	args = append(args, buildNetworkArgs(projectName, svc, cf)...)
 
 	// Labels
 	for _, l := range labelSlice(svc.Labels) {
@@ -617,6 +658,32 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 		args = append(args, "-u", svc.User)
 	}
 
+	args = append(args, buildResourceArgs(svc)...)
+	args = append(args, buildDNSArgs(svc)...)
+
+	// Entrypoint: apple container's --entrypoint takes a single command, so for
+	// exec-form entrypoints (["sh", "-c", ...]) only the first element is the
+	// entrypoint; the rest are passed as container arguments below.
+	entrypointParts := compose.ToCommandSlice(svc.Entrypoint)
+	if len(entrypointParts) > 0 {
+		args = append(args, "--entrypoint", entrypointParts[0])
+	}
+
+	// Image
+	args = append(args, svc.Image)
+
+	// Command: remaining entrypoint args (exec form) come before the service
+	// command, mirroring how an entrypoint array and command compose together.
+	if len(entrypointParts) > 1 {
+		args = append(args, entrypointParts[1:]...)
+	}
+	args = append(args, compose.ToCommandSlice(svc.Command)...)
+
+	return args
+}
+
+func buildResourceArgs(svc compose.Service) []string {
+	var args []string
 	// CPUs (container run -c requires integer; round up from float)
 	if svc.CPUs > 0 {
 		args = append(args, "-c", strconv.Itoa(int(math.Ceil(svc.CPUs))))
@@ -658,12 +725,30 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	for _, c := range compose.ToStringSlice(svc.CapDrop) {
 		args = append(args, "--cap-drop", c)
 	}
-
-	// tmpfs
 	for _, t := range compose.ToStringSlice(svc.Tmpfs) {
 		args = append(args, "--tmpfs", t)
 	}
 
+	return args
+}
+
+func buildNetworkArgs(projectName string, svc compose.Service, cf *compose.ComposeFile) []string {
+	var args []string
+	// Unspecified services join only the project default network.
+	networkKeys := compose.ToNetworkNames(svc.Networks)
+	if svc.Networks == nil {
+		if _, ok := cf.Networks["default"]; ok {
+			networkKeys = []string{"default"}
+		}
+	}
+	for _, key := range networkKeys {
+		args = append(args, "--network", compose.ResolveNetworkName(key, projectName, cf.Networks[key]))
+	}
+	return args
+}
+
+func buildDNSArgs(svc compose.Service) []string {
+	var args []string
 	// DNS
 	for _, d := range compose.ToStringSlice(svc.DNS) {
 		args = append(args, "--dns", d)
@@ -678,24 +763,6 @@ func buildRunArgs(containerName, serviceName, projectName, composeDir string, sv
 	for _, d := range compose.ToStringSlice(svc.DNSOpt) {
 		args = append(args, "--dns-option", d)
 	}
-
-	// Entrypoint: apple container's --entrypoint takes a single command, so for
-	// exec-form entrypoints (["sh", "-c", ...]) only the first element is the
-	// entrypoint; the rest are passed as container arguments below.
-	entrypointParts := compose.ToCommandSlice(svc.Entrypoint)
-	if len(entrypointParts) > 0 {
-		args = append(args, "--entrypoint", entrypointParts[0])
-	}
-
-	// Image
-	args = append(args, svc.Image)
-
-	// Command: remaining entrypoint args (exec form) come before the service
-	// command, mirroring how an entrypoint array and command compose together.
-	if len(entrypointParts) > 1 {
-		args = append(args, entrypointParts[1:]...)
-	}
-	args = append(args, compose.ToCommandSlice(svc.Command)...)
 
 	return args
 }

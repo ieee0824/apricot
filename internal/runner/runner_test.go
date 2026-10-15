@@ -374,7 +374,9 @@ func TestCommandArgv(t *testing.T) {
 			t.Errorf("argv = %v, want %v", *recorded, want)
 		}
 	})
+}
 
+func TestAdditionalCommandArgv(t *testing.T) {
 	cases := []struct {
 		name string
 		call func() error
