@@ -150,10 +150,19 @@ func runUp(args []string) {
 		}
 		networkName := projectName + "_" + name
 		if runner.NetworkExists(networkName) {
+			labels, err := runner.NetworkLabels(networkName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error checking ownership of network %s: %v\n", networkName, err)
+				os.Exit(1)
+			}
+			if err := verifyResourceOwner(labels, projectName, "network", networkName); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 			continue
 		}
 		fmt.Printf("Creating network %s\n", networkName)
-		if err := runner.NetworkCreate(buildNetworkCreateArgs(networkName, net)); err != nil {
+		if err := runner.NetworkCreate(buildNetworkCreateArgs(networkName, projectName, net)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: network create failed for %s: %v\n", networkName, err)
 		}
 	}
@@ -164,10 +173,19 @@ func runUp(args []string) {
 	for name := range cf.Volumes {
 		volumeName := projectName + "_" + name
 		if runner.VolumeExists(volumeName) {
+			labels, err := runner.VolumeLabels(volumeName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error checking ownership of volume %s: %v\n", volumeName, err)
+				os.Exit(1)
+			}
+			if err := verifyResourceOwner(labels, projectName, "volume", volumeName); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 			continue
 		}
 		fmt.Printf("Creating volume %s\n", volumeName)
-		if err := runner.VolumeCreate(volumeName); err != nil {
+		if err := runner.VolumeCreate(buildVolumeCreateArgs(volumeName, projectName)); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: volume create failed for %s: %v\n", volumeName, err)
 			continue
 		}
@@ -1009,14 +1027,34 @@ func removeHostsRecord(records []hostsRecord, containerName string) []hostsRecor
 }
 
 // buildNetworkCreateArgs returns the args for `container network create` (options + name).
-func buildNetworkCreateArgs(networkName string, net compose.Network) []string {
+func buildNetworkCreateArgs(networkName, projectName string, net compose.Network) []string {
 	var args []string
 	if net.Internal {
 		args = append(args, "--internal")
 	}
 	for k, v := range net.Labels {
+		if k == "apricot.project" || k == "apricot.network" {
+			continue
+		}
 		args = append(args, "--label", k+"="+v)
 	}
+	args = append(args, "--label", "apricot.project="+projectName)
+	args = append(args, "--label", "apricot.network="+networkName)
 	args = append(args, networkName)
 	return args
+}
+
+func buildVolumeCreateArgs(volumeName, projectName string) []string {
+	return []string{
+		"--label", "apricot.project=" + projectName,
+		"--label", "apricot.volume=" + volumeName,
+		volumeName,
+	}
+}
+
+func verifyResourceOwner(labels map[string]string, projectName, kind, name string) error {
+	if labels["apricot.project"] != projectName || labels["apricot."+kind] != name {
+		return fmt.Errorf("%s %q is not owned by apricot project %q", kind, name, projectName)
+	}
+	return nil
 }
