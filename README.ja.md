@@ -52,6 +52,8 @@ apricot up -p myproject                    # プロジェクト名を指定
 
 `--scale` を指定したサービスのコンテナ名は `<project>-<service>-<index>` 形式になります（例: `myapp-web-1`, `myapp-web-2`）。
 
+Compose の値はシェル環境と Compose ファイル横の `.env` から変数展開します（シェル環境が優先）。リテラルの `$` には `$$` を使います。YAML の単引用符付きの値は展開しません。`.env` の値は展開用で、コンテナへ自動的には渡しません。
+
 `build:` のあるサービスは、イメージがまだ存在しないときだけビルドされます（docker-compose と同じ挙動）。強制的に再ビルドするには `--build` を付けるか、`apricot build` を使ってください。
 
 ### build
