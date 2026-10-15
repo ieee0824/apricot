@@ -235,6 +235,11 @@ func NetworkExists(name string) bool {
 	return cmd.Run() == nil
 }
 
+// NetworkLabels returns the labels reported by `container network inspect`.
+func NetworkLabels(name string) (map[string]string, error) {
+	return resourceLabels("network", name)
+}
+
 // VolumeExists reports whether the named volume exists, based on the exit
 // status of `container volume inspect`.
 func VolumeExists(name string) bool {
@@ -244,9 +249,36 @@ func VolumeExists(name string) bool {
 	return cmd.Run() == nil
 }
 
-// VolumeCreate creates a volume.
-func VolumeCreate(name string) error {
-	cmd := execCommand("container", "volume", "create", name)
+// VolumeLabels returns the labels reported by `container volume inspect`.
+func VolumeLabels(name string) (map[string]string, error) {
+	return resourceLabels("volume", name)
+}
+
+// resourceLabels reads the nested labels from a network or volume inspection.
+func resourceLabels(kind, name string) (map[string]string, error) {
+	out, err := execCommand("container", kind, "inspect", name).Output()
+	if err != nil {
+		return nil, fmt.Errorf("container %s inspect %s failed: %w", kind, name, err)
+	}
+	var resources []struct {
+		Configuration struct {
+			Name   string            `json:"name"`
+			Labels map[string]string `json:"labels"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal(out, &resources); err != nil {
+		return nil, fmt.Errorf("failed to parse %s inspect output for %s: %w", kind, name, err)
+	}
+	if len(resources) != 1 || resources[0].Configuration.Name != name {
+		return nil, fmt.Errorf("container %s inspect returned no matching entry for %s", kind, name)
+	}
+	return resources[0].Configuration.Labels, nil
+}
+
+// VolumeCreate creates a volume with the given args (options + name).
+func VolumeCreate(args []string) error {
+	cmdArgs := append([]string{"volume", "create"}, args...)
+	cmd := execCommand("container", cmdArgs...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

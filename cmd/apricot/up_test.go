@@ -398,7 +398,7 @@ func TestBuildImageArgs_BuildArgs(t *testing.T) {
 
 func TestBuildNetworkCreateArgs_Simple(t *testing.T) {
 	net := compose.Network{}
-	args := buildNetworkCreateArgs("myproject_frontend", net)
+	args := buildNetworkCreateArgs("myproject_frontend", "myproject", net)
 	last := args[len(args)-1]
 	if last != "myproject_frontend" {
 		t.Errorf("expected network name as last arg, got %q", last)
@@ -406,27 +406,70 @@ func TestBuildNetworkCreateArgs_Simple(t *testing.T) {
 	if slices.Contains(args, "--internal") {
 		t.Errorf("--internal should not be present")
 	}
+	assertContainsSequence(t, args, "--label", "apricot.project=myproject")
+	assertContainsSequence(t, args, "--label", "apricot.network=myproject_frontend")
 }
 
 func TestBuildNetworkCreateArgs_Internal(t *testing.T) {
 	net := compose.Network{Internal: true}
-	args := buildNetworkCreateArgs("myproject_backend", net)
+	args := buildNetworkCreateArgs("myproject_backend", "myproject", net)
 	assertContains(t, args, "--internal")
 	assertContains(t, args, "myproject_backend")
 }
 
 func TestBuildNetworkCreateArgs_Labels(t *testing.T) {
 	net := compose.Network{Labels: map[string]string{"env": "prod"}}
-	args := buildNetworkCreateArgs("myproject_net", net)
+	args := buildNetworkCreateArgs("myproject_net", "myproject", net)
 	assertContainsSequence(t, args, "--label", "env=prod")
 	assertContains(t, args, "myproject_net")
 }
 
 func TestBuildNetworkCreateArgs_NetworkNameIsLast(t *testing.T) {
 	net := compose.Network{Internal: true, Labels: map[string]string{"k": "v"}}
-	args := buildNetworkCreateArgs("mynet", net)
+	args := buildNetworkCreateArgs("mynet", "myproject", net)
 	if args[len(args)-1] != "mynet" {
 		t.Errorf("network name must be last arg, got %v", args)
+	}
+}
+
+func TestBuildResourceCreateArgs_ReservedLabels(t *testing.T) {
+	net := compose.Network{Labels: map[string]string{
+		"apricot.project": "other", "apricot.network": "other", "env": "prod",
+	}}
+	args := buildNetworkCreateArgs("myproject_net", "myproject", net)
+	assertContainsSequence(t, args, "--label", "apricot.project=myproject")
+	assertContainsSequence(t, args, "--label", "apricot.network=myproject_net")
+	assertContainsSequence(t, args, "--label", "env=prod")
+	assertNotContains(t, args, "apricot.project=other")
+	assertNotContains(t, args, "apricot.network=other")
+
+	volumeArgs := buildVolumeCreateArgs("myproject_data", "myproject")
+	assertContainsSequence(t, volumeArgs, "--label", "apricot.project=myproject")
+	assertContainsSequence(t, volumeArgs, "--label", "apricot.volume=myproject_data")
+	if volumeArgs[len(volumeArgs)-1] != "myproject_data" {
+		t.Errorf("volume name must be last arg, got %v", volumeArgs)
+	}
+}
+
+func TestVerifyResourceOwner(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind string
+		labels     map[string]string
+		wantError  bool
+	}{
+		{"owned network", "network", map[string]string{"apricot.project": "p", "apricot.network": "p_net"}, false},
+		{"wrong project", "network", map[string]string{"apricot.project": "other", "apricot.network": "p_net"}, true},
+		{"wrong network", "network", map[string]string{"apricot.project": "p", "apricot.network": "other_net"}, true},
+		{"unlabeled network", "network", nil, true},
+		{"owned volume", "volume", map[string]string{"apricot.project": "p", "apricot.volume": "p_net"}, false},
+		{"wrong volume", "volume", map[string]string{"apricot.project": "p", "apricot.volume": "other"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := verifyResourceOwner(tc.labels, "p", tc.kind, "p_net")
+			if (err != nil) != tc.wantError {
+				t.Errorf("verifyResourceOwner() = %v, wantError %v", err, tc.wantError)
+			}
+		})
 	}
 }
 

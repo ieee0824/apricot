@@ -46,6 +46,18 @@ func runDown(args []string) {
 
 	// Remove networks (after containers are gone)
 	for _, networkName := range networkNamesForProject(cf.Networks, projectName) {
+		if !runner.NetworkExists(networkName) {
+			continue
+		}
+		labels, err := runner.NetworkLabels(networkName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not verify ownership of network %s: %v\n", networkName, err)
+			continue
+		}
+		if err := verifyResourceOwner(labels, projectName, "network", networkName); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v; skipping\n", err)
+			continue
+		}
 		fmt.Printf("Removing network %s\n", networkName)
 		if err := runner.NetworkDelete(networkName); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: network delete failed for %s: %v\n", networkName, err)
@@ -55,6 +67,18 @@ func runDown(args []string) {
 	// Remove volumes if requested
 	if *removeVolumes {
 		for _, volumeName := range volumeNamesForProject(cf.Volumes, projectName) {
+			if !runner.VolumeExists(volumeName) {
+				continue
+			}
+			labels, err := runner.VolumeLabels(volumeName)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not verify ownership of volume %s: %v\n", volumeName, err)
+				continue
+			}
+			if err := verifyResourceOwner(labels, projectName, "volume", volumeName); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v; skipping\n", err)
+				continue
+			}
 			fmt.Printf("Removing volume %s\n", volumeName)
 			if err := runner.VolumeDelete(volumeName); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: volume delete failed for %s: %v\n", volumeName, err)

@@ -387,7 +387,7 @@ func TestCommandArgv(t *testing.T) {
 		{"Build", func() error { return Build([]string{"-t", "img", "."}) }, []string{"container", "build", "-t", "img", "."}},
 		{"NetworkCreate", func() error { return NetworkCreate([]string{"--internal", "net"}) }, []string{"container", "network", "create", "--internal", "net"}},
 		{"NetworkDelete", func() error { return NetworkDelete("net") }, []string{"container", "network", "delete", "net"}},
-		{"VolumeCreate", func() error { return VolumeCreate("v") }, []string{"container", "volume", "create", "v"}},
+		{"VolumeCreate", func() error { return VolumeCreate([]string{"--label", "apricot.project=p", "v"}) }, []string{"container", "volume", "create", "--label", "apricot.project=p", "v"}},
 		{"VolumeDelete", func() error { return VolumeDelete("v") }, []string{"container", "volume", "delete", "v"}},
 		{"Exec", func() error { return Exec([]string{"c", "sh"}) }, []string{"container", "exec", "c", "sh"}},
 	}
@@ -470,6 +470,41 @@ func TestExists(t *testing.T) {
 			}
 			if !reflect.DeepEqual(*recorded, tc.wantArgv) {
 				t.Errorf("argv = %v, want %v", *recorded, tc.wantArgv)
+			}
+		})
+	}
+}
+
+func TestResourceLabels(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, output string
+		want               map[string]string
+		wantError          bool
+	}{
+		{"network", "network", `[{"configuration":{"name":"p_net","labels":{"apricot.project":"p","apricot.network":"p_net"}}}]`, map[string]string{"apricot.project": "p", "apricot.network": "p_net"}, false},
+		{"volume", "volume", `[{"configuration":{"name":"p_net","labels":{"apricot.project":"p","apricot.volume":"p_net"}}}]`, map[string]string{"apricot.project": "p", "apricot.volume": "p_net"}, false},
+		{"unlabeled", "network", `[{"configuration":{"name":"p_net","labels":{}}}]`, map[string]string{}, false},
+		{"wrong name", "network", `[{"configuration":{"name":"other","labels":{}}}]`, nil, true},
+		{"empty", "volume", `[]`, nil, true},
+		{"malformed", "volume", `not-json`, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, recorded := fakeExecCommand(tc.output, 0)
+			restore := withExecCommand(fake)
+			defer restore()
+			var labels map[string]string
+			var err error
+			if tc.kind == "network" {
+				labels, err = NetworkLabels("p_net")
+			} else {
+				labels, err = VolumeLabels("p_net")
+			}
+			if (err != nil) != tc.wantError || !reflect.DeepEqual(labels, tc.want) {
+				t.Errorf("labels = %v, err = %v; want %v, wantError %v", labels, err, tc.want, tc.wantError)
+			}
+			wantArgs := []string{"container", tc.kind, "inspect", "p_net"}
+			if !reflect.DeepEqual(*recorded, wantArgs) {
+				t.Errorf("argv = %v, want %v", *recorded, wantArgs)
 			}
 		})
 	}
