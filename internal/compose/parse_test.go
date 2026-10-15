@@ -2,6 +2,7 @@ package compose
 
 import (
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -16,6 +17,77 @@ func TestExpandEnv(t *testing.T) {
 	want := "hello fallback default  default"
 	if got != want {
 		t.Fatalf("expandEnv() = %q, want %q", got, want)
+	}
+}
+
+func TestLoad_ComposeInterpolation(t *testing.T) {
+	t.Setenv("APRICOT_PRIORITY", "from-shell")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("APRICOT_PRIORITY=from-dotenv\nAPRICOT_DOTENV=from-dotenv\nAPRICOT_CPU=2\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "compose.yaml")
+	data := `services:
+  web:
+    image: alpine:3.23
+    cpus: ${APRICOT_CPU}
+    environment:
+      FROM_DOTENV: "${APRICOT_DOTENV:-fallback}"
+      FROM_SHELL: "${APRICOT_PRIORITY}"
+      LITERAL_DOLLAR: "$$HOME"
+      SINGLE_QUOTED: '${APRICOT_DOTENV}'
+      ${APRICOT_DOTENV}: kept-key
+      NESTED: "${APRICOT_MISSING:-${APRICOT_DOTENV}}"
+`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cf, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cf.Services["web"].CPUs != 2 {
+		t.Fatalf("interpolated cpus = %v, want 2", cf.Services["web"].CPUs)
+	}
+	env, ok := cf.Services["web"].Environment.(map[string]interface{})
+	if !ok {
+		t.Fatalf("environment = %T", cf.Services["web"].Environment)
+	}
+	for key, want := range map[string]string{
+		"FROM_DOTENV": "from-dotenv", "FROM_SHELL": "from-shell", "LITERAL_DOLLAR": "$HOME",
+		"SINGLE_QUOTED": "${APRICOT_DOTENV}", "${APRICOT_DOTENV}": "kept-key", "NESTED": "from-dotenv",
+	} {
+		if env[key] != want {
+			t.Errorf("environment[%q] = %v, want %q", key, env[key], want)
+		}
+	}
+}
+
+func TestInterpolateString(t *testing.T) {
+	lookup := func(name string) (string, bool) {
+		switch name {
+		case "SET":
+			return "value", true
+		case "EMPTY":
+			return "", true
+		}
+		return "", false
+	}
+	for _, tt := range []struct{ input, want string }{
+		{"$$SET", "$SET"},
+		{"$SET/${SET}", "value/value"},
+		{"${EMPTY:-default}/${EMPTY-default}", "default/"},
+		{"${MISSING:-${SET}}", "value"},
+		{"${SET:+yes}/${EMPTY:+yes}/${EMPTY+yes}", "yes//yes"},
+		{"cost $5", "cost $5"},
+	} {
+		got, err := interpolateString(tt.input, lookup)
+		if err != nil || got != tt.want {
+			t.Errorf("interpolateString(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
+		}
+	}
+	if _, err := interpolateString("${MISSING:?set this}", lookup); err == nil {
+		t.Fatal("required missing variable should fail")
 	}
 }
 

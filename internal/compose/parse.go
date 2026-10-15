@@ -18,49 +18,35 @@ func warnf(format string, args ...interface{}) {
 	fmt.Fprintf(os.Stderr, "Warning: "+format+"\n", args...)
 }
 
-// expandEnv expands environment variables supporting ${VAR:-default} and ${VAR-default} syntax.
-func expandEnv(s string) string {
-	return os.Expand(s, func(key string) string {
-		if i := strings.Index(key, ":-"); i >= 0 {
-			name, def := key[:i], key[i+2:]
-			if name == "" {
-				return os.Getenv("")
-			}
-			if v := os.Getenv(name); v != "" {
-				return v
-			}
-			return def
-		}
-		if i := strings.Index(key, "-"); i >= 0 {
-			name, def := key[:i], key[i+1:]
-			if name == "" {
-				return os.Getenv("")
-			}
-			if v, ok := os.LookupEnv(name); ok {
-				return v
-			}
-			return def
-		}
-		return os.Getenv(key)
-	})
-}
-
 // Load reads and parses a docker-compose.yaml file.
-// Environment variables ($VAR, ${VAR}, ${VAR:-default}) in the file are expanded before parsing.
+// Interpolation uses the shell environment and the Compose file's .env file.
 func Load(path string) (*ComposeFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %s: %w", path, err)
 	}
-
-	expanded := expandEnv(string(data))
+	lookup, err := composeEnvLookup(path)
+	if err != nil {
+		return nil, err
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
+	}
+	if err := interpolateYAMLValues(&root, lookup); err != nil {
+		return nil, fmt.Errorf("failed to interpolate %s: %w", path, err)
+	}
 
 	var cf ComposeFile
-	if err := yaml.Unmarshal([]byte(expanded), &cf); err != nil {
+	if err := root.Decode(&cf); err != nil {
 		return nil, fmt.Errorf("failed to parse %s: %w", path, err)
 	}
 
-	for _, w := range unsupportedKeyWarnings(expanded) {
+	expanded, err := yaml.Marshal(&root)
+	if err != nil {
+		return nil, fmt.Errorf("failed to render %s: %w", path, err)
+	}
+	for _, w := range unsupportedKeyWarnings(string(expanded)) {
 		warnf("%s", w)
 	}
 

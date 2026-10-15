@@ -53,6 +53,8 @@ apricot up -p myproject                    # specify project name
 
 Scaled containers are named `<project>-<service>-<index>` (e.g. `myapp-web-1`, `myapp-web-2`).
 
+Compose values interpolate variables from the shell and the `.env` file next to the Compose file (the shell takes precedence). Use `$$` for a literal dollar sign. Single-quoted YAML values are left literal; `.env` values are used for interpolation and are not automatically passed to containers.
+
 Services with `build:` are built only when their image does not exist yet (same as docker-compose); pass `--build` to force a rebuild, or use `apricot build`.
 
 ### build
